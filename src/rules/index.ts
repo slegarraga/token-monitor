@@ -13,6 +13,7 @@ import abandonedWork from './abandoned-work.js';
 import errorCascade from './error-cascade.js';
 import megaTurns from './mega-turns.js';
 import untestedCoding from './untested-coding.js';
+import searchLoop from './search-loop.js';
 
 /**
  * The rule registry.
@@ -40,6 +41,7 @@ export const RULES: Rule[] = [
   errorCascade,
   megaTurns,
   untestedCoding,
+  searchLoop,
 ];
 
 export const RULE_BY_KEY: Map<string, Rule> = new Map(RULES.map((r) => [r.key, r]));
