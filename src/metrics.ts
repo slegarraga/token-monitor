@@ -2,6 +2,7 @@ import type { StoredEvent } from './store.js';
 import type { Activity } from './types.js';
 import { ACTIVITIES } from './types.js';
 import { costOf, PREMIUM_MODEL_RE } from './pricing.js';
+import { norm, toolClass } from './classify.js';
 
 /** Anthropic's default prompt-cache TTL — gaps past this re-pay the context. */
 export const CACHE_TTL_MS = 5 * 60_000;
@@ -56,6 +57,23 @@ export const MEGA_TURN_FLOOR_TOKENS = 20_000;
 export const MEGA_TURN_MIN_TURNS = 8;
 /** A turn must exceed this multiple of the median output to be an outlier. */
 export const MEGA_TURN_OUTLIER_MULTIPLE = 3;
+
+/**
+ * Redundant reads (#89): how many times one read-class tool may run free in a
+ * session before further invocations count as re-reading what is already on
+ * screen. Three is the "first few" of the issue sketch: a focused question
+ * rarely needs the same tool four times.
+ */
+export const READ_FREE_CALLS = 3;
+/**
+ * The firing bar for redundant-reads, double tool-retry-loops' 5% on purpose.
+ * Transcripts keep tool NAMES, not arguments, so ten different files read
+ * through one Read look identical to one file read ten times: a proxy signal
+ * needs a higher share so ordinary broad reading never trips it. The repeat
+ * call floor keeps a single token-heavy turn from firing on its own.
+ */
+export const REDUNDANT_READS_MIN_SHARE = 0.10;
+export const REDUNDANT_READS_MIN_CALLS = 6;
 
 /**
  * The conversation a turn belongs to from the user's point of view: a subagent
@@ -151,6 +169,18 @@ export interface Metrics {
   megaTurnExcessTokens: number;
   /** The bar this window was measured against (carried so reports can name it). */
   megaTurnThreshold: number;
+  /**
+   * Redundant reads (#89): main-loop exploration turns invoking a read-class
+   * tool past READ_FREE_CALLS uses of that tool in the session. Calls counts
+   * those repeat invocations; turns/tokens price the turn that carried them
+   * (input + output); share puts the tokens over all spend; sessions counts
+   * conversations with at least one such turn.
+   */
+  redundantReadCalls: number;
+  redundantReadTurns: number;
+  redundantReadTokens: number;
+  redundantReadSessions: number;
+  redundantReadShare: number;
   /**
    * Cache-write tokens on the 1-hour ephemeral tier, and their share of all
    * cache writes — main loop AND subagent runs, which routinely sit on
@@ -403,6 +433,7 @@ export function computeMetrics(
   let coldRestartTurns = 0, coldRestartTokens = 0;
   let retryTokens = 0;
   let megaTurns = 0, megaTurnTokens = 0, megaTurnExcessTokens = 0, largestTurnOutput = 0;
+  let redundantReadCalls = 0, redundantReadTurns = 0, redundantReadTokens = 0, redundantReadSessions = 0;
   let carryTokens = 0;
   let floorTurns = 0, floorBaseTokens = 0;
   const floors: number[] = [];
@@ -491,6 +522,36 @@ export function computeMetrics(
       }
       prevErrTools = e.is_error ? new Set(tools) : undefined;
     }
+
+    // Redundant reads (#89): exploration turns invoking a read-class tool
+    // past READ_FREE_CALLS uses of that tool in THIS conversation. Main loop
+    // and exploration turns only: heavy unbroken reading is a subagent's job
+    // (see search-loop), and a turn that edited alongside its lookups is
+    // priced by its work, not its reading. Arguments are not stored, so the
+    // count is a proxy: repetition of the TOOL, which is what a transcript
+    // can actually see. The rule's gate sits high because of exactly that.
+    const readCalls = new Map<string, number>();
+    let sessionRedundantRead = false;
+    for (const e of mainRows) {
+      if (e.activity !== 'exploration') continue;
+      let repeatedThisTurn = false;
+      for (const t of parseTools(e.tools)) {
+        if (toolClass(t) !== 'read') continue;
+        const key = norm(t);
+        const n = (readCalls.get(key) ?? 0) + 1;
+        readCalls.set(key, n);
+        if (n > READ_FREE_CALLS) {
+          redundantReadCalls++;
+          repeatedThisTurn = true;
+        }
+      }
+      if (repeatedThisTurn) {
+        redundantReadTurns++;
+        redundantReadTokens += e.input_tokens + e.output_tokens;
+        sessionRedundantRead = true;
+      }
+    }
+    if (sessionRedundantRead) redundantReadSessions++;
   }
 
   // Mega-turn bar (#91): an absolute floor, or an outlier test against this
@@ -567,6 +628,11 @@ export function computeMetrics(
     largestTurnOutput,
     megaTurnExcessTokens,
     megaTurnThreshold,
+    redundantReadCalls,
+    redundantReadTurns,
+    redundantReadTokens,
+    redundantReadSessions,
+    redundantReadShare: spendTokens ? redundantReadTokens / spendTokens : 0,
     extendedCacheTokens,
     extendedCacheShare: cacheCreate ? extendedCacheTokens / cacheCreate : 0,
     extendedCacheSessions,

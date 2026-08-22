@@ -218,6 +218,8 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     cascadeTokens: 0, cascadeShare: 0, cascadeRuns: 0, longestCascadeRun: 0, cascadeExcessTokens: 0,
     megaTurns: 0, megaTurnTokens: 0, megaTurnShare: 0,
     largestTurnOutput: 0, megaTurnExcessTokens: 0, megaTurnThreshold: 0,
+    redundantReadCalls: 0, redundantReadTurns: 0, redundantReadTokens: 0,
+    redundantReadSessions: 0, redundantReadShare: 0,
     subagentSessions: 0, subagentSpendTokens: 0, subagentShare: 0,
     extendedCacheTokens: 0, extendedCacheShare: 0, extendedCacheSessions: 0,
     toolResultTokens: 0, toolResultTurns: 0,
@@ -265,6 +267,10 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     // below is the honest recombination over pooled spend.
     out.largestTurnOutput = Math.max(out.largestTurnOutput, m.largestTurnOutput ?? 0);
     out.megaTurnThreshold = Math.max(out.megaTurnThreshold, m.megaTurnThreshold ?? 0);
+    out.redundantReadCalls += m.redundantReadCalls ?? 0;
+    out.redundantReadTurns += m.redundantReadTurns ?? 0;
+    out.redundantReadTokens += m.redundantReadTokens ?? 0;
+    out.redundantReadSessions += m.redundantReadSessions ?? 0;
     out.subagentSessions += m.subagentSessions ?? 0;
     out.subagentSpendTokens += m.subagentSpendTokens ?? 0;
     out.extendedCacheTokens += m.extendedCacheTokens ?? 0;
@@ -318,6 +324,9 @@ export function mergeMetrics(list: Metrics[]): Metrics {
   out.retryShare = out.spendTokens ? out.retryTokens / out.spendTokens : 0;
   out.cascadeShare = out.spendTokens ? out.cascadeTokens / out.spendTokens : 0;
   out.megaTurnShare = out.spendTokens ? out.megaTurnTokens / out.spendTokens : 0;
+  // Redundant reads composes like retry: calls and tokens add across members,
+  // the share recombines over pooled spend. Legacy exports merge as zeros.
+  out.redundantReadShare = out.spendTokens ? out.redundantReadTokens / out.spendTokens : 0;
   // Pre-0.13 exports carry no subagent fields at all, so a team share is a
   // floor over the members who can actually see their fan-out.
   out.subagentShare = out.spendTokens ? out.subagentSpendTokens / out.spendTokens : 0;

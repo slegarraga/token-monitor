@@ -29,6 +29,7 @@ export type MetricKey =
   | 'retryShare'
   | 'cascadeShare'
   | 'megaTurnShare'
+  | 'redundantReadShare'
   | 'toolResultCarryShare'
   | 'floorShare'
   | 'shippedShare'
