@@ -168,7 +168,7 @@ function codingTurn(session: string, m: number): StoredEvent {
   });
 }
 
-test('redundant-reads: fires past the per-tool allowance and prices the carrying turns', () => {
+test('redundant-reads: fires past the per-tool allowance and prices only paid call fractions', () => {
   const events: StoredEvent[] = [];
   // Nine reads of the same tool interleaved with coding turns: the first 3
   // are free research, the next 6 are repeats. The interleaving also keeps
@@ -181,7 +181,9 @@ test('redundant-reads: fires past the per-tool allowance and prices the carrying
   const m = computeMetrics(events);
   assert.equal(m.redundantReadCalls, 9 - READ_FREE_CALLS);
   assert.equal(m.redundantReadTurns, 6);
-  assert.equal(m.redundantReadTokens, 6 * 3_000);
+  // Six carrying turns, but only six of their nine read calls are past the
+  // allowance: price two-thirds of each turn's spend, not its diagnosis.
+  assert.equal(m.redundantReadTokens, Math.ceil((6 * 3_000) * (6 / 6)));
   assert.equal(m.redundantReadSessions, 1);
   assert.equal(m.redundantReadShare, (6 * 3_000) / (9 * 3_000 + 9 * 200));
 
@@ -224,7 +226,7 @@ test('redundant-reads: stays quiet under the allowance, on broad reading, and on
   assert.equal(structuredFindings(m).some((f) => f.key === 'redundant-reads'), false);
 });
 
-test('redundant-reads: the allowance boundary prices exactly the turns past it', () => {
+test('redundant-reads: the allowance boundary prices exactly the paid fraction', () => {
   const under = Array.from({ length: READ_FREE_CALLS }, (_, i) => readTurn('under', i));
   const mu = computeMetrics(under);
   assert.equal(mu.redundantReadCalls, 0);
@@ -235,6 +237,17 @@ test('redundant-reads: the allowance boundary prices exactly the turns past it',
   assert.equal(mo.redundantReadCalls, 1);
   assert.equal(mo.redundantReadTurns, 1);
   assert.equal(mo.redundantReadTokens, 3_000);
+
+  // The next turn carries two paid read-class calls, so its full turn spend is
+  // priced while the earlier one-call turn remains fully represented once.
+  const multi = [
+    ...over,
+    readTurn('under', 4, { tools: JSON.stringify(['read', 'read']) }),
+  ];
+  const mm = computeMetrics(multi);
+  assert.equal(mm.redundantReadCalls, mo.redundantReadCalls + 2);
+  assert.equal(mm.redundantReadTurns, 2);
+  assert.equal(mm.redundantReadTokens, 3_000 + 3_000 * 2);
 });
 
 test('mergeMetrics recombines redundant-read counts over pooled spend, legacy exports included', () => {

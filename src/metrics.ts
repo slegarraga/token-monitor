@@ -111,11 +111,12 @@ export interface Metrics {
   retryTokens: number;
   retryShare: number;
   /**
-   * Redundant reads (#89): main-loop exploration turns invoking a read-class
-   * tool past READ_FREE_CALLS uses of that tool in the session. Calls counts
-   * those repeat invocations; turns/tokens price the turn that carried them
-   * (input + output); share puts the tokens over all spend; sessions counts
-   * conversations with at least one such turn.
+   * Redundant reads (#89): main-loop exploration calls to a read-class tool
+   * past READ_FREE_CALLS uses of that tool in the session. Calls counts the
+   * repeat invocations themselves. Turns and tokens describe the carrying
+   * turns — a broader population, since one turn can carry several repeats —
+   * and share puts those tokens over all spend. Sessions count conversations
+   * with at least one such turn.
    */
   redundantReadCalls: number;
   redundantReadTurns: number;
@@ -471,9 +472,12 @@ export function computeMetrics(
     // count is a proxy: repetition of the TOOL, which is what a transcript
     // can actually see. The rule's gate sits high because of exactly that.
     const readCalls = new Map<string, number>();
+    const turnSpend: number[] = [];
+    const turnPaidCalls: number[] = [];
     let sessionRedundantRead = false;
     for (const e of mainRows) {
       if (e.activity !== 'exploration') continue;
+      let paidThisTurn = 0;
       let repeatedThisTurn = false;
       for (const t of parseTools(e.tools)) {
         if (toolClass(t) !== 'read') continue;
@@ -483,15 +487,22 @@ export function computeMetrics(
         if (n > READ_FREE_CALLS) {
           redundantReadCalls++;
           repeatedThisTurn = true;
+          paidThisTurn++;
         }
       }
       if (repeatedThisTurn) {
         redundantReadTurns++;
-        redundantReadTokens += e.input_tokens + e.output_tokens;
+        turnSpend.push(e.input_tokens + e.output_tokens);
+        turnPaidCalls.push(paidThisTurn);
         sessionRedundantRead = true;
       }
     }
     if (sessionRedundantRead) redundantReadSessions++;
+
+    // The first READ_FREE_CALLS invocations of each tool are free, but a turn
+    // may carry more than one paid call. Scale its spend by its paid-call
+    // fraction so savings do not claim legitimate diagnosis inside the turn.
+    for (const spend of turnSpend) redundantReadTokens += spend * (turnPaidCalls.shift() ?? 0);
   }
 
   const codingTokens = byActivity.coding.tokens || 1;
