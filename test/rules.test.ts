@@ -4,7 +4,7 @@ import { RULES, RULE_BY_KEY, RULE_BY_METRIC } from '../src/rules/index.js';
 import { computeMetrics, MEGA_TURN_FLOOR_TOKENS } from '../src/metrics.js';
 import type { Metrics } from '../src/metrics.js';
 import { structuredFindings, METRIC_DIRECTION } from '../src/followthrough.js';
-import { enrichFindings, targetFor } from '../src/recommendations.js';
+import { blendedRates, enrichFindings, potentialBill, targetFor } from '../src/recommendations.js';
 import { mergeMetrics } from '../src/team.js';
 import { TRACKABLE_METRICS } from '../src/analyze.js';
 import { renderRules, renderRule } from '../src/report.js';
@@ -456,6 +456,14 @@ test('search-loop: fires on an unbroken run and prices only the excess past the 
   assert.match(rec!.message, /the longest 14 turns straight/);
   assert.ok((rec.savingsUsdPerMonth ?? 0) > 0, 'excess past the floor is priced');
   assert.equal(rec.evidence[0]?.label, '14-turn unbroken explore');
+
+  // Evidence and advice only: no savings family, so even a priced finding
+  // never competes with the cache levers for the headline total.
+  assert.equal(RULE_BY_KEY.get('search-loop')!.family, undefined);
+  assert.equal(potentialBill([rec!], m, 30), undefined);
+  // Follow-through still prices a point of progress at the blended rate.
+  const rates = blendedRates(m);
+  assert.equal(RULE_BY_METRIC.get('searchLoopShare')!.valuePerPoint!({ m, rates }), m.spendTokens * rates.spend);
 });
 
 test('search-loop: stays quiet on interleaved work, subagent fan-outs, and tool-less sources', () => {
