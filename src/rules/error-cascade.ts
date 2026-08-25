@@ -22,13 +22,14 @@ The accounting is deliberately conservative. The first two turns of every run
 are treated as legitimate diagnosis and priced at zero; only the spend beyond
 them counts as waste, and savings use that excess at the blended spend rate.
 The gate and the message agree by construction: Metrics counts the runs (via
-errorCascades) and the rule fires only when that count is above zero, so a
-firing finding always has real runs behind it.
+errorCascades), so a firing finding always has real runs behind it. The gate
+still asks for more than one run and at least 5% of window spend, because a
+single stumble can be diagnosis while repeated cascades are the pattern.
 
 The fix is not "retry harder": it is to stop after the second failure and
 change exactly one thing: name the wrong premise, then re-run.`,
   fires: (m) =>
-    m.cascadeRuns > 0
+    m.cascadeRuns >= 2 && m.cascadeShare >= 0.05
       ? `${m.cascadeRuns} error cascade(s) this window: ${fmtTokens(m.cascadeTokens)} went to runs of ${CASCADE_MIN_RUN}+ consecutive failed turns, the longest stretching to ${m.longestCascadeRun}. After two failures in a row the next attempt buys nothing new — change one thing first.`
       : undefined,
   score: (s) =>

@@ -177,6 +177,29 @@ test('error-cascade: flags runs of 3+ consecutive failed turns, prices only the 
   assert.equal(clean.cascadeRuns, 0);
   assert.equal(rule.fires!(clean), undefined);
 
+  // One bad afternoon is diagnosis, not a catalogue-worthy pattern.
+  const singleRun = computeMetrics(events.filter((e) => e.session_id === 'cb'));
+  assert.equal(singleRun.cascadeRuns, 1);
+  assert.equal(rule.fires!(singleRun), undefined);
+
+  // Two runs still stay quiet when they are too small a slice of window spend.
+  const lowShareEvents = [
+    ...events.filter((e) => e.session_id === 'ca' || e.session_id === 'cb'),
+    ...Array.from({ length: 40 }, (_, i) =>
+      makeStored({
+        session_id: `quiet-${i}`,
+        project: 'proj-c',
+        input_tokens: 1000,
+        output_tokens: 1000,
+        ts: `2026-06-01T01:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,
+      }),
+    ),
+  ];
+  const lowShare = computeMetrics(lowShareEvents);
+  assert.ok(lowShare.cascadeRuns >= 2);
+  assert.ok(lowShare.cascadeShare < 0.05);
+  assert.equal(rule.fires!(lowShare), undefined);
+
   // Savings price the excess at the blended spend rate.
   const rates = { input: 0, cacheRead: 0, spend: 1, premium: 0, cheap: 0, extendedWritePremium: 0, estimated: false };
   assert.equal(rule.savings!({ m, rates, sessions: [] }), 700);
