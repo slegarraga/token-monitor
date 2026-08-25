@@ -273,6 +273,8 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     out.abandonedStreams += m.abandonedStreams ?? 0;
     out.openStreams += m.openStreams ?? 0;
     out.openTokens += m.openTokens ?? 0;
+    // Members count their own untested projects; without project identities in
+    // exports this can repeat a shared project rather than dedupe distinct ones.
     out.untestedCodingProjects += m.untestedCodingProjects ?? 0;
     for (const a of ACTIVITIES) {
       byActivity[a].tokens += m.byActivity[a]?.tokens ?? 0;

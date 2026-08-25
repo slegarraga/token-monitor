@@ -40,10 +40,19 @@ metric is testingShare (window-wide), the number a team wants moving up.`,
       if (e.activity === 'coding') codingTokens += e.input_tokens + e.output_tokens;
       else if (e.activity === 'testing') testingTokens += e.input_tokens + e.output_tokens;
     }
-    if (codingTokens < CODING_FLOOR_TOKENS || testingTokens > 0) return { score: 0, label: '' };
+    if (
+      codingTokens < CODING_FLOOR_TOKENS ||
+      codingTokens + testingTokens === 0 ||
+      testingTokens / (codingTokens + testingTokens) > TESTING_SHARE_CEILING
+    ) {
+      return { score: 0, label: '' };
+    }
     return {
       score: codingTokens,
-      label: `${s.project}: ${fmtTokens(codingTokens)} coding, no test turns`,
+      label:
+        testingTokens > 0
+          ? `${s.project}: ${fmtTokens(codingTokens)} coding, ${Math.round((testingTokens / (codingTokens + testingTokens)) * 100)}% tests`
+          : `${s.project}: ${fmtTokens(codingTokens)} coding, no test turns`,
     };
   },
   clause: ({ events }) => {

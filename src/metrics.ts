@@ -67,7 +67,7 @@ export interface Metrics {
   byActivity: Record<Activity, { tokens: number; share: number; events: number }>;
   byModel: Record<string, { tokens: number; costUsd: number }>;
   thinkToCodeRatio: number;
-  /** testing spend / (coding + testing) spend, window-wide: the untested-coding rule tracks this. */
+  /** Testing share of all work spend: testing / (input + output), window-wide. */
   testingShare: number;
   /** Projects over the coding floor whose agent ran no test turns this window. */
   untestedCodingProjects: number;

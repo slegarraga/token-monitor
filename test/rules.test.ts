@@ -165,6 +165,25 @@ test('untested-coding: flags coding-heavy projects with no test turns, skips tes
   const s = { sessionId: 'a1', project: 'proj-a', date: '2026-06-01', m: computeMetrics(evsA), events: evsA, isSidechain: false };
   assert.ok(rule.score!(s).score > 0);
 
+  // Evidence mirrors the detector: a session inside an offender project still
+  // scores even when that one session has no testing, and the label reflects
+  // the small tested share rather than claiming "no test turns."
+  const nearCeiling = [
+    makeStored({ session_id: 'd1', project: 'proj-d', activity: 'coding', input_tokens: 200_000 }),
+    makeStored({ session_id: 'd2', project: 'proj-d', activity: 'testing', input_tokens: 3_000 }),
+  ];
+  const sNear = {
+    sessionId: 'd1',
+    project: 'proj-d',
+    date: '2026-06-01',
+    m: computeMetrics(nearCeiling),
+    events: nearCeiling,
+    isSidechain: false,
+  };
+  const scored = rule.score!(sNear);
+  assert.ok(scored.score > 0);
+  assert.match(scored.label, /2% tests/);
+
   // gate honesty: fires reads the per-project count off Metrics, so a window
   // whose overall testing share is dragged up by other projects still names
   // its untested one, and a window with none never claims one
