@@ -253,9 +253,9 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     out.megaTurnTokens += m.megaTurnTokens ?? 0;
     out.megaTurnExcessTokens += m.megaTurnExcessTokens ?? 0;
     // Counts and tokens add across members, but each member counted against
-    // its OWN bar (percentile of its own turns), so the merged threshold is
-    // reported as the strictest bar any member used. The share below is the
-    // honest recombination over pooled spend.
+    // its OWN outlier bar (median of its own turns), so the merged threshold
+    // is reported as the loosest bar that any member actually used. The share
+    // below is the honest recombination over pooled spend.
     out.largestTurnOutput = Math.max(out.largestTurnOutput, m.largestTurnOutput ?? 0);
     out.megaTurnThreshold = Math.max(out.megaTurnThreshold, m.megaTurnThreshold ?? 0);
     out.subagentSessions += m.subagentSessions ?? 0;

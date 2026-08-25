@@ -44,6 +44,10 @@ export const BLOAT_FRESH_SHARE = 0.3; // ...and ≥30% of late context is re-pai
  * files sets their own bar rather than being accused for it.
  */
 export const MEGA_TURN_FLOOR_TOKENS = 20_000;
+/** Turns required before the window-relative half of the mega-turn bar is used. */
+export const MEGA_TURN_MIN_TURNS = 8;
+/** A turn must exceed this multiple of the median output to be an outlier. */
+export const MEGA_TURN_OUTLIER_MULTIPLE = 3;
 
 /**
  * The conversation a turn belongs to from the user's point of view: a subagent
@@ -104,8 +108,10 @@ export interface Metrics {
   retryShare: number;
   /**
    * Mega-turns (#91): turns whose output alone cleared this window's bar,
-   * max(MEGA_TURN_FLOOR_TOKENS, p99.9 of the window's turn outputs), so the
-   * bar is derived from the user's own data rather than a magic constant.
+   * max(MEGA_TURN_FLOOR_TOKENS, 3x median of the window's turn outputs), so
+   * the bar is derived from the user's own data without letting the tail set
+   * itself. The adaptive half switches on only with enough turns to estimate
+   * a stable center.
    * `megaTurnTokens` counts their full spend (input + output); `megaTurnShare`
    * puts that over all spend. Subagent runs count like any other turn: their
    * output is as real, and a runaway generation inside a fan-out is exactly
@@ -466,15 +472,18 @@ export function computeMetrics(
     }
   }
 
-  // Mega-turn bar (#91): percentile of THIS window's turns over an absolute
-  // floor, then one pass to count, sum spend, and keep the excess above the
-  // bar for pricing. Window-level on purpose: a per-session percentile would
-  // let one quiet session set a low bar and fire on a routine big write.
-  const sortedOutputs = events.map((e) => e.output_tokens).sort((a, b) => a - b);
-  const p999 = sortedOutputs.length
-    ? sortedOutputs[Math.min(sortedOutputs.length - 1, Math.floor(sortedOutputs.length * 0.999))]
-    : 0;
-  const megaTurnThreshold = Math.max(MEGA_TURN_FLOOR_TOKENS, p999);
+  // Mega-turn bar (#91): an absolute floor, or an outlier test against this
+  // window's central output once enough turns exist. A quantile cannot work
+  // here: it is drawn from the same data it gates, so flat distributions make
+  // every turn an apparent "outlier." Window-level on purpose: per-session
+  // medians would let one quiet session fire on a routine big write.
+  const sortedOutputs = [...events.map((e) => e.output_tokens)].sort((a, b) => a - b);
+  const outputMedian =
+    sortedOutputs.length >= MEGA_TURN_MIN_TURNS ? median(sortedOutputs) : 0;
+  const megaTurnThreshold = Math.max(
+    MEGA_TURN_FLOOR_TOKENS,
+    outputMedian * MEGA_TURN_OUTLIER_MULTIPLE,
+  );
   if (megaTurnThreshold > 0) {
     for (const e of events) {
       if (e.output_tokens > largestTurnOutput) largestTurnOutput = e.output_tokens;

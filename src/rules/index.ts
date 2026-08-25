@@ -7,10 +7,10 @@ import contextBloat from './context-bloat.js';
 import coldRestarts from './cold-restarts.js';
 import premiumMisroute from './premium-misroute.js';
 import toolRetryLoops from './tool-retry-loops.js';
-import megaTurns from './mega-turns.js';
 import toolResultBloat from './tool-result-bloat.js';
 import contextFloorCreep from './context-floor-creep.js';
 import abandonedWork from './abandoned-work.js';
+import megaTurns from './mega-turns.js';
 
 /**
  * The rule registry.
@@ -32,10 +32,10 @@ export const RULES: Rule[] = [
   coldRestarts,
   premiumMisroute,
   toolRetryLoops,
-  megaTurns,
   toolResultBloat,
   contextFloorCreep,
   abandonedWork,
+  megaTurns,
 ];
 
 export const RULE_BY_KEY: Map<string, Rule> = new Map(RULES.map((r) => [r.key, r]));

@@ -1,5 +1,9 @@
 import type { Rule } from './types.js';
-import { MEGA_TURN_FLOOR_TOKENS } from '../metrics.js';
+import {
+  MEGA_TURN_FLOOR_TOKENS,
+  MEGA_TURN_MIN_TURNS,
+  MEGA_TURN_OUTLIER_MULTIPLE,
+} from '../metrics.js';
 import { fmtTokens } from '../fmt.js';
 
 const rule: Rule = {
@@ -14,11 +18,12 @@ most expensive tokens there are, and one such turn can quietly cost more than a
 day of reading.
 
 The bar adapts to the window instead of being a magic constant: the larger of an
-absolute floor (${fmtTokens(MEGA_TURN_FLOOR_TOKENS)}) and the 99.9th percentile of the
-window's own turn outputs. A user whose models legitimately write long files
-sets their own bar higher rather than being accused for it, because a long file
-legitimately needs a long write. That is also why the message stays descriptive:
-it names what happened, not what the user should feel about it.
+absolute floor (${fmtTokens(MEGA_TURN_FLOOR_TOKENS)}) and ${MEGA_TURN_OUTLIER_MULTIPLE}x the median
+output. The adaptive test needs at least ${MEGA_TURN_MIN_TURNS} turns before it trusts the
+window's center. This is an outlier test, not a quantile: users whose models
+legitimately write long files raise their own bar rather than being accused for
+it. That is also why the message stays descriptive — it names what happened, not
+what the user should feel about it.
 
 Savings price only the EXCESS above the bar at the blended spend rate: the part
 of each mega-turn that had no reason to exist even if the work was real.
