@@ -201,5 +201,8 @@ test('session-thrash: gates on detected overlapping clusters, not generic floor 
     extendedWritePremium: 0,
     estimated: false,
   };
-  assert.match(serialRule.clause!({ events: concurrent, rates: zeroRates, monthly: 1 }), /2 concurrent/);
+  assert.match(
+    serialRule.clause!({ events: concurrent, rates: zeroRates, monthly: 1, m: mConcurrent }),
+    /2 concurrent/,
+  );
 });

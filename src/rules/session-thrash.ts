@@ -1,14 +1,8 @@
-import type { Rule } from './types.js';
-import { detectSessionThrash, FLOOR_MIN_SESSIONS, groupBy } from '../metrics.js';
+import type { Metrics } from '../metrics.js';
+import { detectSessionThrash } from '../metrics.js';
 import { fmtTokens } from '../fmt.js';
 import type { StoredEvent } from '../store.js';
-
-/** Same median estimator metrics.ts uses for session floors. */
-function median(sorted: number[]): number {
-  if (sorted.length === 0) return 0;
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
+import type { ClauseArgs, Rule } from './types.js';
 
 /**
  * Main-loop sessions in the same project whose [first, last] intervals overlap
@@ -47,19 +41,8 @@ least.`,
   // score() sees one session at a time and cannot see intervals; concurrency
   // is a group property, so evidence lives in clause() only.
   score: () => ({ score: 0, label: '' }),
-  clause: ({ events }) => {
-    // Session floor: same estimator as metrics.ts (median of per-session
-    // minimum standing context, main-loop only, >=5 sessions to trust it).
-    const ctxOf = (e: StoredEvent) => e.input_tokens + e.cache_read_tokens + e.cache_creation_tokens;
-    const main = events.filter((e) => e.is_sidechain !== 1);
-    const floors: number[] = [];
-    for (const [, evs] of groupBy(main, 'session_id')) {
-      const contexts = evs.map(ctxOf).filter((c) => c > 0);
-      if (contexts.length > 0) floors.push(Math.min(...contexts));
-    }
-    const sessionFloorTokens =
-      floors.length >= FLOOR_MIN_SESSIONS ? median([...floors].sort((a, b) => a - b)) : 0;
-    const groups = detectSessionThrash(events, sessionFloorTokens);
+  clause: ({ events, m }: ClauseArgs & { m?: Metrics }) => {
+    const groups = detectSessionThrash(events, m?.sessionFloorTokens ?? 0);
     if (!groups.length) return '';
     const totalExtra = groups.reduce((sum, g) => sum + g.extraFloorTokens, 0);
     const names = groups
