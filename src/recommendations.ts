@@ -279,6 +279,8 @@ function unitValuePerPoint(metric: MetricKey, m: Metrics, rates: BlendedRates): 
       return inputSide * rates.cacheRead;
     case 'floorShare':
       return (m.floorBaseTokens ?? 0) * rates.cacheRead;
+    case 'thrashShare':
+      return m.spendTokens * rates.spend;
     case 'abandonedShare':
       return m.spendTokens * rates.spend;
     default:
