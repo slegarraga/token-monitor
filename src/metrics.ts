@@ -31,6 +31,14 @@ export function effectiveCacheTtlOf(rows: StoredEvent[]): number {
   return writes > 0 && extended * 2 >= writes ? EXTENDED_CACHE_TTL_MS : CACHE_TTL_MS;
 }
 /** Sessions need this many turns before a context-bloat trend is measurable. */
+/**
+ * Every token billed on the input side: fresh input, cache writes and cache
+ * reads. The population a cache-hit point is worth something over.
+ */
+export function inputSideTokens(m: Metrics): number {
+  return m.cacheReadTokens + m.inputTokens + m.cacheCreationTokens;
+}
+
 export const BLOAT_MIN_TURNS = 8;
 export const BLOAT_GROWTH = 2; // late-half avg context ≥ 2× early half
 export const BLOAT_FRESH_SHARE = 0.3; // ...and ≥30% of late context is re-paid fresh

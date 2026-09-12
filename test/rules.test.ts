@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RULES, RULE_BY_KEY } from '../src/rules/index.js';
+import { RULES, RULE_BY_KEY, RULE_BY_METRIC } from '../src/rules/index.js';
 import { computeMetrics, MEGA_TURN_FLOOR_TOKENS } from '../src/metrics.js';
 import type { Metrics } from '../src/metrics.js';
-import { structuredFindings } from '../src/followthrough.js';
+import { structuredFindings, METRIC_DIRECTION } from '../src/followthrough.js';
 import { enrichFindings, targetFor } from '../src/recommendations.js';
 import { mergeMetrics } from '../src/team.js';
+import { TRACKABLE_METRICS } from '../src/analyze.js';
 import { renderRules, renderRule } from '../src/report.js';
 import { makeStored } from './helpers.js';
 import { readdirSync } from 'node:fs';
@@ -47,6 +48,34 @@ test('registry: every rule file is registered, and its filename is its key', () 
   for (const rule of RULES) {
     assert.ok(files.includes(rule.key), `rule "${rule.key}" has no src/rules/${rule.key}.ts (filename must match the key)`);
   }
+});
+
+/**
+ * The three facts that used to live in a shared line somewhere else: the
+ * metric's direction (followthrough.ts), what a point of it is worth
+ * (recommendations.ts) and the catalogue size (e2e). Each one was a merge
+ * conflict for every contributor and a silent hole when someone missed it.
+ */
+test('registry: every rule owns its metric, its direction and its $/point', () => {
+  const metrics = RULES.map((r) => r.metric);
+  assert.equal(new Set(metrics).size, metrics.length, 'two rules share a metric — RULE_BY_METRIC would shadow one');
+
+  for (const r of RULES) {
+    assert.equal(METRIC_DIRECTION[r.metric], r.direction, `${r.key}: direction disagrees with METRIC_DIRECTION`);
+    assert.equal(RULE_BY_METRIC.get(r.metric), r, `${r.key}: not reachable by its own metric`);
+    assert.ok(
+      'valuePerPoint' in r,
+      `${r.key} must declare valuePerPoint — return undefined if the metric is not $-translatable, ` +
+        'but declare it, or follow-through drops the $/point projection while the finding still prints savings',
+    );
+  }
+
+  // Anything the LLM path can hand to recordLlmFindings must have a direction;
+  // that lookup is unchecked at runtime.
+  for (const k of TRACKABLE_METRICS) {
+    assert.ok(METRIC_DIRECTION[k], `TRACKABLE_METRICS has ${k}, which has no direction`);
+  }
+  assert.equal(METRIC_DIRECTION.shippedShare, 'up', 'a metric no rule owns still needs its direction');
 });
 
 test('registry: a rule that declares no target still yields no target', () => {
