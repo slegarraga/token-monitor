@@ -214,6 +214,7 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     coldRestartTurns: 0, coldRestartTokens: 0, coldRestartShare: 0, coldRestartBaseTokens: 0,
     premiumWasteTokens: 0, premiumWasteShare: 0,
     retryTokens: 0, retryShare: 0,
+    cascadeTokens: 0, cascadeShare: 0, cascadeRuns: 0, longestCascadeRun: 0, cascadeExcessTokens: 0,
     megaTurns: 0, megaTurnTokens: 0, megaTurnShare: 0,
     largestTurnOutput: 0, megaTurnExcessTokens: 0, megaTurnThreshold: 0,
     subagentSessions: 0, subagentSpendTokens: 0, subagentShare: 0,
@@ -249,6 +250,11 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     out.coldRestartBaseTokens += m.coldRestartBaseTokens ?? (m.inputTokens + m.cacheCreationTokens);
     out.premiumWasteTokens += m.premiumWasteTokens ?? 0;
     out.retryTokens += m.retryTokens ?? 0;
+    out.cascadeTokens += m.cascadeTokens ?? 0;
+    out.cascadeRuns += m.cascadeRuns ?? 0;
+    out.cascadeExcessTokens += m.cascadeExcessTokens ?? 0;
+    // Run length is a max, not a sum: the merged window's worst single run.
+    out.longestCascadeRun = Math.max(out.longestCascadeRun, m.longestCascadeRun ?? 0);
     out.megaTurns += m.megaTurns ?? 0;
     out.megaTurnTokens += m.megaTurnTokens ?? 0;
     out.megaTurnExcessTokens += m.megaTurnExcessTokens ?? 0;
@@ -305,6 +311,7 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     : 0;
   out.premiumWasteShare = out.spendTokens ? out.premiumWasteTokens / out.spendTokens : 0;
   out.retryShare = out.spendTokens ? out.retryTokens / out.spendTokens : 0;
+  out.cascadeShare = out.spendTokens ? out.cascadeTokens / out.spendTokens : 0;
   out.megaTurnShare = out.spendTokens ? out.megaTurnTokens / out.spendTokens : 0;
   // Pre-0.13 exports carry no subagent fields at all, so a team share is a
   // floor over the members who can actually see their fan-out.

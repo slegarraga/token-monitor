@@ -26,6 +26,7 @@ export type MetricKey =
   | 'coldRestartShare'
   | 'premiumWasteShare'
   | 'retryShare'
+  | 'cascadeShare'
   | 'megaTurnShare'
   | 'toolResultCarryShare'
   | 'floorShare'
@@ -53,6 +54,7 @@ export const METRIC_DIRECTION: Record<MetricKey, 'up' | 'down'> = {
   coldRestartShare: 'down',
   premiumWasteShare: 'down',
   retryShare: 'down',
+  cascadeShare: 'down',
   megaTurnShare: 'down',
   toolResultCarryShare: 'down',
   floorShare: 'down',

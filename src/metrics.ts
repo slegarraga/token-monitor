@@ -106,6 +106,15 @@ export interface Metrics {
   /** Tokens on turns re-running a tool that errored in the immediately previous turn. */
   retryTokens: number;
   retryShare: number;
+  /** Spend inside runs of >= CASCADE_MIN_RUN consecutive failed turns. */
+  cascadeTokens: number;
+  cascadeShare: number;
+  /** How many such runs the window contains. */
+  cascadeRuns: number;
+  /** Length of the longest single cascade run this window. */
+  longestCascadeRun: number;
+  /** Cascade spend beyond the second turn of each run: the savings basis. */
+  cascadeExcessTokens: number;
   /**
    * Mega-turns (#91): turns whose output alone cleared this window's bar,
    * max(MEGA_TURN_FLOOR_TOKENS, 3x median of the window's turn outputs), so
@@ -498,6 +507,9 @@ export function computeMetrics(
   const codingTokens = byActivity.coding.tokens || 1;
   const inputSide = input + cacheRead + cacheCreate;
   const outcomes = computeOutcomes(events, opts);
+  const cascades = errorCascades(events);
+  const cascadeTokens = cascades.reduce((t, c) => t + c.runTokens, 0);
+  const cascadeExcessTokens = cascades.reduce((t, c) => t + c.excessTokens, 0);
   const floorTokens = floors.length >= FLOOR_MIN_SESSIONS ? median([...floors].sort((a, b) => a - b)) : 0;
   return {
     events: events.length,
@@ -529,6 +541,11 @@ export function computeMetrics(
     premiumWasteShare: spendTokens ? premiumWasteTokens / spendTokens : 0,
     retryTokens,
     retryShare: spendTokens ? retryTokens / spendTokens : 0,
+    cascadeTokens,
+    cascadeShare: spendTokens ? cascadeTokens / spendTokens : 0,
+    cascadeRuns: cascades.length,
+    longestCascadeRun: cascades.reduce((mx, c) => Math.max(mx, c.runLength), 0),
+    cascadeExcessTokens,
     megaTurns,
     megaTurnTokens,
     megaTurnShare: spendTokens ? megaTurnTokens / spendTokens : 0,
@@ -662,6 +679,58 @@ export function extendedCacheOpportunity(events: StoredEvent[]): {
     recoverableTokens += recovered;
   }
   return { recoverableTokens, writeTokens, sessions };
+}
+
+/** Minimum consecutive failed turns for an error run to count as a cascade. */
+export const CASCADE_MIN_RUN = 3;
+
+export interface ErrorCascade {
+  sessionId: string;
+  project: string;
+  /** Turns in the run, always >= CASCADE_MIN_RUN. */
+  runLength: number;
+  /** input + output over every turn of the run, matching spendTokens. */
+  runTokens: number;
+  /** The same over turns beyond the second: what pure retrying cost. */
+  excessTokens: number;
+}
+
+/**
+ * Runs of >= CASCADE_MIN_RUN consecutive failed turns inside one session.
+ * One failure is normal; three in a row means the agent is retrying against
+ * a broken premise (wrong path, missing permission, unavailable service) and
+ * every iteration re-pays full context. Declinations are already excluded
+ * upstream (isDeclination): a user saying no is not a failure.
+ *
+ * The first two turns of a run are treated as legitimate diagnosis and only
+ * the excess is priced as waste (see error-cascade's savings()). Subagent
+ * runs are walked like any other session: a cascade inside one is just as
+ * real. Runs are returned biggest-spend first for evidence lines.
+ */
+export function errorCascades(events: StoredEvent[]): ErrorCascade[] {
+  const out: ErrorCascade[] = [];
+  for (const [sessionId, all] of groupBy(events, 'session_id')) {
+    const arr = [...all].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    let run: StoredEvent[] = [];
+    const flush = () => {
+      if (run.length >= CASCADE_MIN_RUN) {
+        out.push({
+          sessionId,
+          project: run[0].project,
+          runLength: run.length,
+          runTokens: run.reduce((t, e) => t + e.input_tokens + e.output_tokens, 0),
+          excessTokens: run.slice(2).reduce((t, e) => t + e.input_tokens + e.output_tokens, 0),
+        });
+      }
+      run = [];
+    };
+    for (const e of arr) {
+      if (e.is_error) run.push(e);
+      else flush();
+    }
+    flush();
+  }
+  return out.sort((a, b) => b.runTokens - a.runTokens);
 }
 
 export function parseTools(tools: string): string[] {

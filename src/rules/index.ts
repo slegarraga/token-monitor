@@ -10,6 +10,7 @@ import toolRetryLoops from './tool-retry-loops.js';
 import toolResultBloat from './tool-result-bloat.js';
 import contextFloorCreep from './context-floor-creep.js';
 import abandonedWork from './abandoned-work.js';
+import errorCascade from './error-cascade.js';
 import megaTurns from './mega-turns.js';
 
 /**
@@ -35,6 +36,7 @@ export const RULES: Rule[] = [
   toolResultBloat,
   contextFloorCreep,
   abandonedWork,
+  errorCascade,
   megaTurns,
 ];
 
