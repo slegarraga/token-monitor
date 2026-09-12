@@ -11,6 +11,7 @@ import toolResultBloat from './tool-result-bloat.js';
 import contextFloorCreep from './context-floor-creep.js';
 import abandonedWork from './abandoned-work.js';
 import errorCascade from './error-cascade.js';
+import megaTurns from './mega-turns.js';
 
 /**
  * The rule registry.
@@ -36,6 +37,7 @@ export const RULES: Rule[] = [
   contextFloorCreep,
   abandonedWork,
   errorCascade,
+  megaTurns,
 ];
 
 export const RULE_BY_KEY: Map<string, Rule> = new Map(RULES.map((r) => [r.key, r]));

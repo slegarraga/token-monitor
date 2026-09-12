@@ -36,6 +36,20 @@ export const BLOAT_GROWTH = 2; // late-half avg context ≥ 2× early half
 export const BLOAT_FRESH_SHARE = 0.3; // ...and ≥30% of late context is re-paid fresh
 
 /**
+ * The absolute floor of the mega-turn bar (#91). A turn emitting more OUTPUT
+ * than this is examined however small its window, because no ordinary request
+ * writes 20k tokens of output by accident. On windows whose own distribution
+ * sits higher, the bar escalates to the 99.9th percentile of the window's
+ * turns (see computeMetrics): a user whose models legitimately write long
+ * files sets their own bar rather than being accused for it.
+ */
+export const MEGA_TURN_FLOOR_TOKENS = 20_000;
+/** Turns required before the window-relative half of the mega-turn bar is used. */
+export const MEGA_TURN_MIN_TURNS = 8;
+/** A turn must exceed this multiple of the median output to be an outlier. */
+export const MEGA_TURN_OUTLIER_MULTIPLE = 3;
+
+/**
  * The conversation a turn belongs to from the user's point of view: a subagent
  * run counts under the session that spawned it, everything else under itself.
  * `sessions` counts these, so a fan-out of 40 agents stays ONE session in the
@@ -101,6 +115,30 @@ export interface Metrics {
   longestCascadeRun: number;
   /** Cascade spend beyond the second turn of each run: the savings basis. */
   cascadeExcessTokens: number;
+  /**
+   * Mega-turns (#91): turns whose output alone cleared this window's bar,
+   * max(MEGA_TURN_FLOOR_TOKENS, 3x median of the window's turn outputs), so
+   * the bar is derived from the user's own data without letting the tail set
+   * itself. The adaptive half switches on only with enough turns to estimate
+   * a stable center.
+   * `megaTurnTokens` counts their full spend (input + output); `megaTurnShare`
+   * puts that over all spend. Subagent runs count like any other turn: their
+   * output is as real, and a runaway generation inside a fan-out is exactly
+   * as worth naming.
+   */
+  megaTurns: number;
+  megaTurnTokens: number;
+  megaTurnShare: number;
+  /** Output of the single largest turn in the window (the evidence label). */
+  largestTurnOutput: number;
+  /**
+   * Output above the bar, summed over mega-turns: the only part the savings
+   * estimate prices. Everything up to the bar is treated as legitimate work,
+   * which keeps the number conservative and easy to defend.
+   */
+  megaTurnExcessTokens: number;
+  /** The bar this window was measured against (carried so reports can name it). */
+  megaTurnThreshold: number;
   /**
    * Cache-write tokens on the 1-hour ephemeral tier, and their share of all
    * cache writes — main loop AND subagent runs, which routinely sit on
@@ -352,6 +390,7 @@ export function computeMetrics(
   let trendSessions = 0, bloatedSessions = 0;
   let coldRestartTurns = 0, coldRestartTokens = 0;
   let retryTokens = 0;
+  let megaTurns = 0, megaTurnTokens = 0, megaTurnExcessTokens = 0, largestTurnOutput = 0;
   let carryTokens = 0;
   let floorTurns = 0, floorBaseTokens = 0;
   const floors: number[] = [];
@@ -442,6 +481,29 @@ export function computeMetrics(
     }
   }
 
+  // Mega-turn bar (#91): an absolute floor, or an outlier test against this
+  // window's central output once enough turns exist. A quantile cannot work
+  // here: it is drawn from the same data it gates, so flat distributions make
+  // every turn an apparent "outlier." Window-level on purpose: per-session
+  // medians would let one quiet session fire on a routine big write.
+  const sortedOutputs = [...events.map((e) => e.output_tokens)].sort((a, b) => a - b);
+  const outputMedian =
+    sortedOutputs.length >= MEGA_TURN_MIN_TURNS ? median(sortedOutputs) : 0;
+  const megaTurnThreshold = Math.max(
+    MEGA_TURN_FLOOR_TOKENS,
+    outputMedian * MEGA_TURN_OUTLIER_MULTIPLE,
+  );
+  if (megaTurnThreshold > 0) {
+    for (const e of events) {
+      if (e.output_tokens > largestTurnOutput) largestTurnOutput = e.output_tokens;
+      if (e.output_tokens >= megaTurnThreshold) {
+        megaTurns++;
+        megaTurnTokens += e.input_tokens + e.output_tokens;
+        megaTurnExcessTokens += e.output_tokens - megaTurnThreshold;
+      }
+    }
+  }
+
   const codingTokens = byActivity.coding.tokens || 1;
   const inputSide = input + cacheRead + cacheCreate;
   const outcomes = computeOutcomes(events, opts);
@@ -484,6 +546,12 @@ export function computeMetrics(
     cascadeRuns: cascades.length,
     longestCascadeRun: cascades.reduce((mx, c) => Math.max(mx, c.runLength), 0),
     cascadeExcessTokens,
+    megaTurns,
+    megaTurnTokens,
+    megaTurnShare: spendTokens ? megaTurnTokens / spendTokens : 0,
+    largestTurnOutput,
+    megaTurnExcessTokens,
+    megaTurnThreshold,
     extendedCacheTokens,
     extendedCacheShare: cacheCreate ? extendedCacheTokens / cacheCreate : 0,
     extendedCacheSessions,

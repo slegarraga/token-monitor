@@ -268,6 +268,7 @@ function unitValuePerPoint(metric: MetricKey, m: Metrics, rates: BlendedRates): 
     case 'reworkRatio':
     case 'retryShare':
     case 'cascadeShare':
+    case 'megaTurnShare':
       return m.spendTokens * rates.spend;
     case 'premiumShare':
     case 'premiumWasteShare':
