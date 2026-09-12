@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { makeCursorFixture, makeAntigravityFixture } from './helpers.js';
 import { cursorUserDir } from '../src/adapters/cursor.js';
 import { codeUserDir } from '../src/adapters/copilot.js';
+import { RULES } from '../src/rules/index.js';
 
 /**
  * True end-to-end: runs the built CLI as a subprocess against a synthetic
@@ -311,7 +312,7 @@ test('e2e: rules lists the catalogue, explains one rule, and rejects an unknown 
   assert.ok(one.stdout.includes('src/rules/high-rework.ts'));
 
   const json = JSON.parse(run(['rules', '--json', ...DAYS]).stdout);
-  assert.equal(json.length, 12);
+  assert.equal(json.length, RULES.length);
   assert.ok(json.every((r: { key: string; docs: string }) => r.key && r.docs.length > 0));
 
   const bad = run(['rules', 'no-such-rule', ...DAYS]);

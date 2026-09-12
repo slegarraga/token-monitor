@@ -14,6 +14,9 @@ const rule: Rule = {
   key: 'untested-coding',
   metric: 'testingShare',
   direction: 'up',
+  // Deliberately no $/point: this is an invest-MORE finding with no savings
+  // figure, and pricing "write some tests" as a dollar saved would be dishonest.
+  valuePerPoint: () => undefined,
   title: 'Coding-heavy projects with no agent-run tests',
   docs: `Per-project version of the window-wide testing warning: projects whose
 agent transcript carries real coding spend while its testing share sits near

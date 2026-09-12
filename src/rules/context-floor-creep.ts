@@ -6,6 +6,7 @@ const rule: Rule = {
   key: 'context-floor-creep',
   metric: 'floorShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => (m.floorBaseTokens ?? 0) * rates.cacheRead,
   family: 'caching',
   title: 'A standing context every turn re-reads',
   docs: `Before a session does anything it loads a block of context nobody chose

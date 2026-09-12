@@ -14,6 +14,7 @@ const rule: Rule = {
   key: 'premium-model-overuse',
   metric: 'premiumShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * Math.max(0, rates.premium - rates.cheap),
   family: 'routing',
   title: 'Almost everything on the premium tier',
   docs: `Share of spend on premium models. Fires above 90% — and only when the mix
