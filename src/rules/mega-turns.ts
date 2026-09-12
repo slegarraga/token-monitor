@@ -10,6 +10,7 @@ const rule: Rule = {
   key: 'mega-turns',
   metric: 'megaTurnShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * rates.spend,
   family: 'rework',
   title: 'Single turns emitting runaway output',
   docs: `Spend on turns whose OUTPUT alone cleared the window's bar: a whole file

@@ -9,6 +9,7 @@ const rule: Rule = {
   key: 'error-cascade',
   metric: 'cascadeShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * rates.spend,
   family: 'rework',
   title: 'Error cascades: retrying against a broken premise',
   docs: `Spend inside runs of ${CASCADE_MIN_RUN}+ consecutive failed turns in one
