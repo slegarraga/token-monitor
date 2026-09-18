@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RULES, RULE_BY_KEY } from '../src/rules/index.js';
-import { computeMetrics } from '../src/metrics.js';
-import { structuredFindings } from '../src/followthrough.js';
+import { RULES, RULE_BY_KEY, RULE_BY_METRIC } from '../src/rules/index.js';
+import { computeMetrics, MEGA_TURN_FLOOR_TOKENS } from '../src/metrics.js';
+import type { Metrics } from '../src/metrics.js';
+import { structuredFindings, METRIC_DIRECTION } from '../src/followthrough.js';
 import { enrichFindings, targetFor } from '../src/recommendations.js';
+import { mergeMetrics } from '../src/team.js';
+import { TRACKABLE_METRICS } from '../src/analyze.js';
 import { renderRules, renderRule } from '../src/report.js';
 import { makeStored } from './helpers.js';
 import { TRIVIAL_OUTPUT_TOKENS } from '../src/metrics.js';
@@ -48,6 +51,34 @@ test('registry: every rule file is registered, and its filename is its key', () 
   }
 });
 
+/**
+ * The three facts that used to live in a shared line somewhere else: the
+ * metric's direction (followthrough.ts), what a point of it is worth
+ * (recommendations.ts) and the catalogue size (e2e). Each one was a merge
+ * conflict for every contributor and a silent hole when someone missed it.
+ */
+test('registry: every rule owns its metric, its direction and its $/point', () => {
+  const metrics = RULES.map((r) => r.metric);
+  assert.equal(new Set(metrics).size, metrics.length, 'two rules share a metric — RULE_BY_METRIC would shadow one');
+
+  for (const r of RULES) {
+    assert.equal(METRIC_DIRECTION[r.metric], r.direction, `${r.key}: direction disagrees with METRIC_DIRECTION`);
+    assert.equal(RULE_BY_METRIC.get(r.metric), r, `${r.key}: not reachable by its own metric`);
+    assert.ok(
+      'valuePerPoint' in r,
+      `${r.key} must declare valuePerPoint — return undefined if the metric is not $-translatable, ` +
+        'but declare it, or follow-through drops the $/point projection while the finding still prints savings',
+    );
+  }
+
+  // Anything the LLM path can hand to recordLlmFindings must have a direction;
+  // that lookup is unchecked at runtime.
+  for (const k of TRACKABLE_METRICS) {
+    assert.ok(METRIC_DIRECTION[k], `TRACKABLE_METRICS has ${k}, which has no direction`);
+  }
+  assert.equal(METRIC_DIRECTION.shippedShare, 'up', 'a metric no rule owns still needs its direction');
+});
+
 test('registry: a rule that declares no target still yields no target', () => {
   assert.equal(targetFor('low-think-code', []), undefined);
   assert.deepEqual(targetFor('low-cache-hit', []), { value: 0.8, personal: false });
@@ -70,6 +101,9 @@ test('registry: shipped rule keys and their order are stable', () => {
     'thinking-on-trivial',
     'context-floor-creep',
     'abandoned-work',
+    'error-cascade',
+    'mega-turns',
+    'untested-coding',
   ]);
 });
 
@@ -134,6 +168,24 @@ test('thinking-on-trivial: prices metered reasoning, not folded-output guesses',
   assert.equal(tooFew.thinkingOnTrivialTokens, 4_000);
   assert.equal(rule.fires!(tooFew), undefined);
 
+  // Three tiny turns lost in a huge window are not a finding either: the
+  // share floor keeps a 0% message from ever printing.
+  const dwarfed = computeMetrics([
+    ...measured,
+    makeStored({ session_id: 'whale', activity: 'coding', input_tokens: 5_000_000, output_tokens: 0 }),
+  ]);
+  assert.equal(dwarfed.thinkingOnTrivialTurns, 3);
+  assert.ok(dwarfed.thinkingOnTrivialShare < 0.02);
+  assert.equal(rule.fires!(dwarfed), undefined);
+
+  // The rule owns its $/point so follow-through can project it.
+  assert.ok(rule.valuePerPoint, 'thinking-on-trivial must declare valuePerPoint');
+  const point = rule.valuePerPoint!({
+    m: mMeasured,
+    rates: { input: 0, cacheRead: 0, spend: 0, premium: 0.01, cheap: 0.002, extendedWritePremium: 0, estimated: false },
+  });
+  assert.ok(point! > 0, 'a point of thinkingOnTrivialShare is worth premium-minus-cheap over spend');
+
   // A source that says "reasoning happened" without separately metering it
   // is observed but never priced from ordinary output tokens.
   const folded = Array.from({ length: 3 }, (_, i) =>
@@ -150,6 +202,13 @@ test('thinking-on-trivial: prices metered reasoning, not folded-output guesses',
   assert.equal(mFolded.thinkingOnTrivialTokens, 0);
   assert.equal(mFolded.thinkingOnTrivialTurns, 0);
   assert.equal(rule.fires!(mFolded), undefined);
+
+  // thinkingObservedTurns finally has a reader: folded reasoning surfaces as
+  // a visibility note, never as priced waste.
+  assert.equal(rule.clause!({ events: measured, rates: undefined as never, monthly: 1 }), '');
+  const foldedClause = rule.clause!({ events: folded, rates: undefined as never, monthly: 1 });
+  assert.match(foldedClause, /doesn't meter separately/);
+  assert.match(foldedClause, /3 turns/);
 
   // Reasoning that produces visible work or drives tools is excluded.
   const productive = computeMetrics([
@@ -192,4 +251,247 @@ test('renderRules lists every rule; renderRule prints one rule with its firing s
   assert.match(one, /fires on the current window/);
   // With no metrics at all the catalogue still renders (never-collected machine).
   assert.ok(renderRules().includes('tool-retry-loops'));
+});
+
+test('error-cascade: flags runs of 3+ consecutive failed turns, prices only the excess', () => {
+  const err = (over: Partial<StoredEvent> = {}) => makeStored({ is_error: 1, ...over });
+  const events: StoredEvent[] = [
+    // proj-a, session ca: 3 consecutive errors (300 tok each) then recovery.
+    err({ session_id: 'ca', project: 'proj-a', input_tokens: 200, output_tokens: 100, ts: '2026-06-01T00:00:01.000Z' }),
+    err({ session_id: 'ca', project: 'proj-a', input_tokens: 200, output_tokens: 100, ts: '2026-06-01T00:00:02.000Z' }),
+    err({ session_id: 'ca', project: 'proj-a', input_tokens: 200, output_tokens: 100, ts: '2026-06-01T00:00:03.000Z' }),
+    makeStored({ session_id: 'ca', project: 'proj-a', ts: '2026-06-01T00:00:04.000Z' }),
+    // proj-b, session cb: 4 consecutive errors (100 tok each): excess = turns 3+4.
+    err({ session_id: 'cb', project: 'proj-b', input_tokens: 100, ts: '2026-06-01T00:10:01.000Z' }),
+    err({ session_id: 'cb', project: 'proj-b', input_tokens: 100, ts: '2026-06-01T00:10:02.000Z' }),
+    err({ session_id: 'cb', project: 'proj-b', input_tokens: 100, ts: '2026-06-01T00:10:03.000Z' }),
+    err({ session_id: 'cb', project: 'proj-b', input_tokens: 100, ts: '2026-06-01T00:10:04.000Z' }),
+    // lone failures never cascade, and a success breaks a run in two.
+    err({ session_id: 'ok', project: 'proj-a', ts: '2026-06-01T00:20:01.000Z' }),
+    makeStored({ session_id: 'ok', project: 'proj-a', ts: '2026-06-01T00:20:02.000Z' }),
+    err({ session_id: 'ok', project: 'proj-a', ts: '2026-06-01T00:20:03.000Z' }),
+    err({ session_id: 'ok', project: 'proj-a', ts: '2026-06-01T00:20:04.000Z' }),
+  ];
+  const rule = RULE_BY_KEY.get('error-cascade')!;
+  const m = computeMetrics(events);
+
+  // Two qualifying runs (ca and cb); worst is cb's run of four.
+  assert.equal(m.cascadeRuns, 2);
+  assert.equal(m.longestCascadeRun, 4);
+  assert.ok(Math.abs(m.cascadeShare - 1700 / m.spendTokens) < 1e-9);
+  // Only spend past each run's second turn: 300 (ca) + 400 (cb) = 700.
+  assert.equal(m.cascadeExcessTokens, 700);
+
+  // Gate honesty: fires names real runs, and a clean window never claims one.
+  const fired = rule.fires!(m);
+  assert.match(fired ?? '', /2 error cascade/);
+  assert.match(fired ?? '', /longest stretching to 4/);
+  const clean = computeMetrics(events.filter((e) => e.session_id === 'ok'));
+  assert.equal(clean.cascadeRuns, 0);
+  assert.equal(rule.fires!(clean), undefined);
+
+  // One bad afternoon is diagnosis, not a catalogue-worthy pattern.
+  const singleRun = computeMetrics(events.filter((e) => e.session_id === 'cb'));
+  assert.equal(singleRun.cascadeRuns, 1);
+  assert.equal(rule.fires!(singleRun), undefined);
+
+  // Two runs still stay quiet when they are too small a slice of window spend.
+  const lowShareEvents = [
+    ...events.filter((e) => e.session_id === 'ca' || e.session_id === 'cb'),
+    ...Array.from({ length: 40 }, (_, i) =>
+      makeStored({
+        session_id: `quiet-${i}`,
+        project: 'proj-c',
+        input_tokens: 1000,
+        output_tokens: 1000,
+        ts: `2026-06-01T01:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,
+      }),
+    ),
+  ];
+  const lowShare = computeMetrics(lowShareEvents);
+  assert.ok(lowShare.cascadeRuns >= 2);
+  assert.ok(lowShare.cascadeShare < 0.05);
+  assert.equal(rule.fires!(lowShare), undefined);
+
+  // Savings price the excess at the blended spend rate.
+  const rates = { input: 0, cacheRead: 0, spend: 1, premium: 0, cheap: 0, extendedWritePremium: 0, estimated: false };
+  assert.equal(rule.savings!({ m, rates, sessions: [] }), 700);
+
+  // Clause and evidence name where the cascades are.
+  const clause = rule.clause!({ events, rates, monthly: 1 });
+  assert.match(clause, /proj-a\/ca/);
+  assert.match(clause, /proj-b\/cb/);
+  const s = { sessionId: 'cb', project: 'proj-b', date: '2026-06-01', m: computeMetrics(events.filter((e) => e.session_id === 'cb')), events: [], isSidechain: false };
+  const sc = rule.score!(s);
+  assert.equal(sc.score, 800);
+  assert.match(sc.label, /4-turn worst/);
+
+  // It reaches the pipeline like any other finding.
+  assert.ok(structuredFindings(m).some((f) => f.key === 'error-cascade'));
+});
+
+// --- #91: mega-turns. The bar is max(20k floor, 3x median output once there
+// are enough turns); savings price only the excess above it. --------------
+
+test('mega-turns: fires on a small-window runaway and prices only its excess', () => {
+  const events = [
+    makeStored({ session_id: 'calm', input_tokens: 1_000, output_tokens: 500 }),
+    makeStored({
+      session_id: 'burst', ts: '2026-06-01T01:00:00.000Z',
+      input_tokens: 30_000, output_tokens: 21_000,
+    }),
+  ];
+  const m = computeMetrics(events);
+  assert.equal(m.megaTurns, 1);
+  // A two-turn window has too little data for the adaptive half, so the
+  // absolute floor does the work and prices only the part above itself.
+  assert.equal(m.megaTurnThreshold, MEGA_TURN_FLOOR_TOKENS);
+  assert.equal(m.megaTurnExcessTokens, 1_000);
+  assert.ok(structuredFindings(m).some((f) => f.key === 'mega-turns'));
+  const rec = enrichFindings(events, m, 30).find((r) => r.key === 'mega-turns');
+  assert.ok(rec, 'mega-turns should fire on a 21k-output turn');
+  assert.match(rec!.message, /1 turn\(s\) emitted 20\.0k\+ output tokens/);
+  // Excess-only savings price the 1k above the floor, never the whole turn.
+  assert.ok((rec!.savingsUsdPerMonth ?? 0) > 0);
+});
+
+test('mega-turns: prices the excess above the bar in a large window and names the worst turn', () => {
+  const events: StoredEvent[] = [];
+  for (let i = 0; i < 10_000; i++) {
+    events.push(makeStored({
+      session_id: 'grind',
+      ts: `2026-06-01T${String(Math.floor(i / 3600)).padStart(2, '0')}:${String(Math.floor((i % 3600) / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,
+      input_tokens: 2_000, output_tokens: 100,
+    }));
+  }
+  for (let i = 0; i < 3; i++) {
+    events.push(makeStored({
+      session_id: `burst${i}`, ts: `2026-06-0${i + 2}T05:00:00.000Z`,
+      input_tokens: 40_000, output_tokens: 30_000,
+    }));
+  }
+  const m = computeMetrics(events);
+  // Three clear outliers in a mostly quiet window stay governed by the
+  // absolute floor; the median is intentionally resistant to this few spikes.
+  assert.equal(m.megaTurnThreshold, MEGA_TURN_FLOOR_TOKENS);
+  assert.equal(m.megaTurns, 3);
+  assert.equal(m.largestTurnOutput, 30_000);
+  assert.equal(m.megaTurnExcessTokens, 3 * 10_000);
+  assert.equal(m.megaTurnTokens, 3 * 70_000);
+  const rec = enrichFindings(events, m, 30).find((r) => r.key === 'mega-turns')!;
+  assert.ok(rec, 'mega-turns should fire');
+  assert.ok((rec.savingsUsdPerMonth ?? 0) > 0, 'excess above the bar is priced');
+  assert.equal(rec.evidence[0]?.label, '30.0k tok single turn');
+  assert.ok(rec.evidence.every((e) => e.sessionId.startsWith('burst')), 'evidence ranks the mega sessions first');
+});
+
+test('mega-turns: stays quiet on ordinary windows, escalates the bar for heavy writers', () => {
+  const calm = [
+    makeStored({ output_tokens: 800 }),
+    makeStored({ ts: '2026-06-01T00:01:00.000Z', output_tokens: 1_200 }),
+  ];
+  const mCalm = computeMetrics(calm);
+  assert.equal(mCalm.megaTurns, 0);
+  assert.equal(structuredFindings(mCalm).some((f) => f.key === 'mega-turns'), false);
+
+  // A user whose every turn legitimately writes 25k sets their own bar: the
+  // median-based outlier test rises past the floor, so nothing fires.
+  const heavy = Array.from({ length: 400 }, (_, i) =>
+    makeStored({ ts: `2026-06-01T${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00.000Z`, output_tokens: 25_000 }));
+  const mHeavy = computeMetrics(heavy);
+  assert.equal(mHeavy.megaTurnThreshold, 75_000);
+  assert.equal(mHeavy.megaTurns, 0);
+  assert.equal(mHeavy.megaTurnExcessTokens, 0);
+  assert.equal(structuredFindings(mHeavy).some((f) => f.key === 'mega-turns'), false);
+
+  // A genuine outlier clears that stable center without accusing routine work.
+  const mixed = [
+    ...heavy,
+    makeStored({
+      session_id: 'runaway',
+      input_tokens: 10_000,
+      output_tokens: 90_000,
+    }),
+  ];
+  const mMixed = computeMetrics(mixed);
+  assert.equal(mMixed.megaTurns, 1);
+  assert.equal(mMixed.megaTurnThreshold, 75_000);
+  assert.equal(mMixed.megaTurnExcessTokens, 15_000);
+});
+
+test('mergeMetrics recombines mega-turn counts over pooled spend, legacy exports included', () => {
+  const burst = computeMetrics([
+    makeStored({ session_id: 'burst', input_tokens: 40_000, output_tokens: 30_000 }),
+  ]);
+  const grind = computeMetrics([
+    makeStored({ session_id: 'grind', input_tokens: 2_000, output_tokens: 100 }),
+    makeStored({ ts: '2026-06-01T00:01:00.000Z', session_id: 'grind', input_tokens: 2_000, output_tokens: 100 }),
+  ]);
+  const merged = mergeMetrics([burst, grind]);
+  assert.equal(merged.megaTurns, 1);
+  assert.equal(merged.megaTurnTokens, 70_000);
+  assert.equal(merged.megaTurnShare, 70_000 / (70_000 + 4_200));
+  assert.equal(merged.megaTurnThreshold, Math.max(burst.megaTurnThreshold, grind.megaTurnThreshold));
+  // Pre-0.15 exports carry none of these fields and must merge as zeros.
+  const legacy = { ...burst } as Partial<Metrics>;
+  delete legacy.megaTurns; delete legacy.megaTurnTokens; delete legacy.megaTurnShare;
+  delete legacy.largestTurnOutput; delete legacy.megaTurnExcessTokens; delete legacy.megaTurnThreshold;
+  const withLegacy = mergeMetrics([legacy as Metrics, grind]);
+  assert.equal(withLegacy.megaTurns, 0);
+  assert.equal(withLegacy.megaTurnShare, 0);
+});
+
+test('untested-coding: flags coding-heavy projects with no test turns, skips tested ones', () => {
+  const events: StoredEvent[] = [
+    // proj-a: 300k coding tokens across sessions, zero testing → offender
+    makeStored({ session_id: 'a1', project: 'proj-a', activity: 'coding', input_tokens: 150_000 }),
+    makeStored({ session_id: 'a2', project: 'proj-a', activity: 'coding', input_tokens: 150_000 }),
+    // proj-b: heavy coding but real testing turns → clean
+    makeStored({ session_id: 'b1', project: 'proj-b', activity: 'coding', input_tokens: 200_000 }),
+    makeStored({ session_id: 'b2', project: 'proj-b', activity: 'testing', input_tokens: 30_000 }),
+    // proj-c: tiny project under the floor → not judged
+    makeStored({ session_id: 'c1', project: 'proj-c', activity: 'coding', input_tokens: 5_000 }),
+  ];
+  const rule = RULE_BY_KEY.get('untested-coding')!;
+
+  const clause = rule.clause!({ events, rates: {
+    input: 0, cacheRead: 0, spend: 0, premium: 0, cheap: 0, extendedWritePremium: 0, estimated: false,
+  }, monthly: 1 });
+  assert.match(clause, /proj-a/);
+  assert.doesNotMatch(clause, /proj-b/);
+  assert.doesNotMatch(clause, /proj-c/);
+
+  // evidence scoring: proj-a's sessions score, a project with testing turns does not
+  const evsA = events.filter((e) => e.project === 'proj-a');
+  const s = { sessionId: 'a1', project: 'proj-a', date: '2026-06-01', m: computeMetrics(evsA), events: evsA, isSidechain: false };
+  assert.ok(rule.score!(s).score > 0);
+
+  // Evidence mirrors the detector: a session inside an offender project still
+  // scores even when that one session has no testing, and the label reflects
+  // the small tested share rather than claiming "no test turns."
+  const nearCeiling = [
+    makeStored({ session_id: 'd1', project: 'proj-d', activity: 'coding', input_tokens: 200_000 }),
+    makeStored({ session_id: 'd2', project: 'proj-d', activity: 'testing', input_tokens: 3_000 }),
+  ];
+  const sNear = {
+    sessionId: 'd1',
+    project: 'proj-d',
+    date: '2026-06-01',
+    m: computeMetrics(nearCeiling),
+    events: nearCeiling,
+    isSidechain: false,
+  };
+  const scored = rule.score!(sNear);
+  assert.ok(scored.score > 0);
+  assert.match(scored.label, /2% tests/);
+
+  // gate honesty: fires reads the per-project count off Metrics, so a window
+  // whose overall testing share is dragged up by other projects still names
+  // its untested one, and a window with none never claims one
+  const m = computeMetrics(events);
+  assert.ok(m.untestedCodingProjects >= 1);
+  assert.match(rule.fires!(m) ?? '', /no test turns/);
+  const clean = computeMetrics(events.filter((e) => e.project !== 'proj-a'));
+  assert.equal(clean.untestedCodingProjects, 0);
+  assert.equal(rule.fires!(clean), undefined);
 });

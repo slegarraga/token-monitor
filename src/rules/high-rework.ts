@@ -5,6 +5,7 @@ const rule: Rule = {
   key: 'high-rework',
   metric: 'reworkRatio',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * rates.spend,
   family: 'rework',
   title: 'High rework after failures',
   docs: `Share of spend on coding/testing turns that happen after the first failed

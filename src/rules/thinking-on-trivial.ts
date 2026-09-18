@@ -1,5 +1,5 @@
 import type { Rule } from './types.js';
-import { parseTools, TRIVIAL_OUTPUT_TOKENS, TRIVIAL_THINKING_MIN_TURNS } from '../metrics.js';
+import { parseTools, TRIVIAL_OUTPUT_TOKENS, TRIVIAL_THINKING_MIN_TURNS, TRIVIAL_THINKING_MIN_SHARE } from '../metrics.js';
 
 const rule: Rule = {
   key: 'thinking-on-trivial',
@@ -19,8 +19,8 @@ The signal is deliberately conservative:
   here rather than being attributed by guesswork.
 - **Conversation only, and no tools.** Coding, exploration and tool-driven turns
   can legitimately reason briefly before doing visible work.
-- **At least ${TRIVIAL_THINKING_MIN_TURNS} qualifying turns.** Isolated small turns do not establish a
-  routing habit.
+- **At least ${TRIVIAL_THINKING_MIN_TURNS} qualifying turns and ${(TRIVIAL_THINKING_MIN_SHARE * 100).toFixed(0)}% of spend.** Isolated small turns — or three tiny turns
+  lost inside a huge window — do not establish a routing habit.
 
 A turn qualifies when its visible output is at most ${TRIVIAL_OUTPUT_TOKENS} tokens. The share
 is measured over all input and output spend; savings price the exact metered
@@ -28,9 +28,23 @@ reasoning tokens at the premium-minus-cheap rate delta.`,
   fires: (m) =>
     (m.thinkingOnTrivialTurns ?? 0) >= TRIVIAL_THINKING_MIN_TURNS &&
     (m.thinkingOnTrivialTokens ?? 0) > 0 &&
+    (m.thinkingOnTrivialShare ?? 0) >= TRIVIAL_THINKING_MIN_SHARE &&
     (m.spendTokens ?? 0) > 0
       ? `${(m.thinkingOnTrivialShare * 100).toFixed(0)}% of spend is metered reasoning on ${m.thinkingOnTrivialTurns} trivial conversation turn(s). Lower reasoning effort for short chat turns, or move them to a cheaper tier when the model supports it.`
       : undefined,
+  valuePerPoint: ({ m, rates }) => m.spendTokens * Math.max(0, rates.premium - rates.cheap),
+  /**
+   * thinkingObservedTurns finally gets a reader: turns where the source saw
+   * reasoning but didn't meter it separately are genuinely worth telling
+   * someone about — it's the difference between *no waste* and *no visibility*.
+   * Never priced, only stated, and only when such turns exist.
+   */
+  clause: ({ events }) => {
+    const unmeasured = events.filter((e) => e.has_thinking && !(e.thinking_tokens > 0)).length;
+    if (unmeasured === 0) return '';
+    const turn = unmeasured === 1 ? '1 turn' : `${unmeasured} turns`;
+    return ` ${turn} showed reasoning this source doesn't meter separately — that spend is invisible here, not zero.`;
+  },
   score: (s) => {
     const tokens = s.events.reduce(
       (sum, e) =>

@@ -5,7 +5,7 @@ import type { Finding, FollowRow, MetricKey } from './followthrough.js';
 import { structuredFindings, fmtMetric } from './followthrough.js';
 import { PRICES, PREMIUM_MODEL_RE } from './pricing.js';
 import type { BlendedRates, RuleFamily, SessionInfo, Target } from './rules/types.js';
-import { RULE_BY_KEY, RULES } from './rules/index.js';
+import { RULE_BY_KEY, RULE_BY_METRIC, RULES } from './rules/index.js';
 import type { CauseBreakdown } from './causes.js';
 import { decomposeCause } from './causes.js';
 
@@ -259,31 +259,14 @@ export function realizedMonthly(
   return usd > 0 ? usd : undefined;
 }
 
-/** $ value of a full 1.0 move in the metric, at the current window's volumes. */
+/**
+ * $ value of a full 1.0 move in the metric, at the current window's volumes.
+ * Owned by the rule that moves the metric (see Rule.valuePerPoint), so adding
+ * a finding no longer means editing a switch in this file. LLM-tracked rows
+ * carry a metric rather than a rule key, which is why the lookup is by metric.
+ */
 function unitValuePerPoint(metric: MetricKey, m: Metrics, rates: BlendedRates): number | undefined {
-  const inputSide = m.cacheReadTokens + m.inputTokens + m.cacheCreationTokens;
-  switch (metric) {
-    case 'cacheHitRatio':
-      return inputSide * (rates.input - rates.cacheRead);
-    case 'reworkRatio':
-    case 'retryShare':
-      return m.spendTokens * rates.spend;
-    case 'premiumShare':
-    case 'premiumWasteShare':
-      return m.spendTokens * Math.max(0, rates.premium - rates.cheap);
-    case 'coldRestartShare':
-      // Same population as the ratio — see the cold-restarts rule's savings().
-      return (m.coldRestartBaseTokens ?? m.inputTokens + m.cacheCreationTokens) * (rates.input - rates.cacheRead);
-    case 'toolResultCarryShare':
-      // Carried context is re-read from cache; same rate its rule prices with.
-      return inputSide * rates.cacheRead;
-    case 'floorShare':
-      return (m.floorBaseTokens ?? 0) * rates.cacheRead;
-    case 'abandonedShare':
-      return m.spendTokens * rates.spend;
-    default:
-      return undefined; // thinkToCodeRatio, contextBloatShare: not $-translatable
-  }
+  return RULE_BY_METRIC.get(metric)?.valuePerPoint?.({ m, rates });
 }
 
 /** "≈ ~$84/mo" — shared by the terminal report, analyze, and the dashboard. */

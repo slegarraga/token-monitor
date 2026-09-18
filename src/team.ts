@@ -212,10 +212,14 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     spendTokens: 0, costUsd: 0, costEstimated: false, costUnpricedTokens: 0,
     cacheHitRatio: 0, reworkTokens: 0, reworkRatio: 0, errorEvents: 0,
     byActivity, byModel, thinkToCodeRatio: 0,
+    testingShare: 0, untestedCodingProjects: 0,
     trendSessions: 0, bloatedSessions: 0, contextBloatShare: 0,
     coldRestartTurns: 0, coldRestartTokens: 0, coldRestartShare: 0, coldRestartBaseTokens: 0,
     premiumWasteTokens: 0, premiumWasteShare: 0,
     retryTokens: 0, retryShare: 0,
+    cascadeTokens: 0, cascadeShare: 0, cascadeRuns: 0, longestCascadeRun: 0, cascadeExcessTokens: 0,
+    megaTurns: 0, megaTurnTokens: 0, megaTurnShare: 0,
+    largestTurnOutput: 0, megaTurnExcessTokens: 0, megaTurnThreshold: 0,
     subagentSessions: 0, subagentSpendTokens: 0, subagentShare: 0,
     extendedCacheTokens: 0, extendedCacheShare: 0, extendedCacheSessions: 0,
     toolResultTokens: 0, toolResultTurns: 0,
@@ -252,6 +256,20 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     out.coldRestartBaseTokens += m.coldRestartBaseTokens ?? (m.inputTokens + m.cacheCreationTokens);
     out.premiumWasteTokens += m.premiumWasteTokens ?? 0;
     out.retryTokens += m.retryTokens ?? 0;
+    out.cascadeTokens += m.cascadeTokens ?? 0;
+    out.cascadeRuns += m.cascadeRuns ?? 0;
+    out.cascadeExcessTokens += m.cascadeExcessTokens ?? 0;
+    // Run length is a max, not a sum: the merged window's worst single run.
+    out.longestCascadeRun = Math.max(out.longestCascadeRun, m.longestCascadeRun ?? 0);
+    out.megaTurns += m.megaTurns ?? 0;
+    out.megaTurnTokens += m.megaTurnTokens ?? 0;
+    out.megaTurnExcessTokens += m.megaTurnExcessTokens ?? 0;
+    // Counts and tokens add across members, but each member counted against
+    // its OWN outlier bar (median of its own turns), so the merged threshold
+    // is reported as the loosest bar that any member actually used. The share
+    // below is the honest recombination over pooled spend.
+    out.largestTurnOutput = Math.max(out.largestTurnOutput, m.largestTurnOutput ?? 0);
+    out.megaTurnThreshold = Math.max(out.megaTurnThreshold, m.megaTurnThreshold ?? 0);
     out.subagentSessions += m.subagentSessions ?? 0;
     out.subagentSpendTokens += m.subagentSpendTokens ?? 0;
     out.extendedCacheTokens += m.extendedCacheTokens ?? 0;
@@ -277,6 +295,9 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     out.abandonedStreams += m.abandonedStreams ?? 0;
     out.openStreams += m.openStreams ?? 0;
     out.openTokens += m.openTokens ?? 0;
+    // Members count their own untested projects; without project identities in
+    // exports this can repeat a shared project rather than dedupe distinct ones.
+    out.untestedCodingProjects += m.untestedCodingProjects ?? 0;
     for (const a of ACTIVITIES) {
       byActivity[a].tokens += m.byActivity[a]?.tokens ?? 0;
       byActivity[a].events += m.byActivity[a]?.events ?? 0;
@@ -290,6 +311,7 @@ export function mergeMetrics(list: Metrics[]): Metrics {
   for (const a of ACTIVITIES) {
     byActivity[a].share = out.spendTokens ? byActivity[a].tokens / out.spendTokens : 0;
   }
+  out.testingShare = byActivity.testing.share;
   const denom = out.cacheReadTokens + out.inputTokens + out.cacheCreationTokens;
   out.cacheHitRatio = denom ? out.cacheReadTokens / denom : 0;
   out.reworkRatio = out.spendTokens ? out.reworkTokens / out.spendTokens : 0;
@@ -299,6 +321,8 @@ export function mergeMetrics(list: Metrics[]): Metrics {
     : 0;
   out.premiumWasteShare = out.spendTokens ? out.premiumWasteTokens / out.spendTokens : 0;
   out.retryShare = out.spendTokens ? out.retryTokens / out.spendTokens : 0;
+  out.cascadeShare = out.spendTokens ? out.cascadeTokens / out.spendTokens : 0;
+  out.megaTurnShare = out.spendTokens ? out.megaTurnTokens / out.spendTokens : 0;
   out.thinkingOnTrivialShare = out.spendTokens
     ? out.thinkingOnTrivialTokens / out.spendTokens
     : 0;

@@ -105,6 +105,18 @@ export interface Rule {
    * reachable"). Only for per-session skills — model choice is not one.
    */
   personalTarget?: { metric: (m: Metrics) => number; direction: 'up' | 'down' };
+  /**
+   * $ value of a full 1.0 move in `metric` at this window's volumes — what
+   * follow-through multiplies a point of progress by.
+   *
+   * Declare it even when the answer is undefined (a ratio with no token
+   * population of its own). It used to live as a `case` in one switch in
+   * recommendations.ts whose `default` returned undefined, so a rule that
+   * forgot its case still printed a savings figure while silently dropping
+   * the $/point projection — a shared line that four contributor PRs in a row
+   * missed, which is why it now sits next to the metric it prices.
+   */
+  valuePerPoint?(a: { m: Metrics; rates: BlendedRates }): number | undefined;
   /** Estimated $ saved over the window if the metric hit its target. */
   savings?(a: SavingsArgs): number | undefined;
   /** Extra sentence appended to the message when the rule fires (needs events). */

@@ -1,4 +1,5 @@
 import type { Rule } from './types.js';
+import { inputSideTokens } from '../metrics.js';
 import { fmtTokens } from '../fmt.js';
 
 /**
@@ -12,6 +13,8 @@ const rule: Rule = {
   key: 'tool-result-bloat',
   metric: 'toolResultCarryShare',
   direction: 'down',
+  // Carried context is re-read from cache; same rate the rule prices with.
+  valuePerPoint: ({ m, rates }) => inputSideTokens(m) * rates.cacheRead,
   family: 'caching',
   title: 'Tool results riding along after they were read',
   docs: `A tool result is not paid once. It enters the context and is re-read in

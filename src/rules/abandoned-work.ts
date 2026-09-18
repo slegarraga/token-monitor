@@ -11,6 +11,7 @@ const rule: Rule = {
   key: 'abandoned-work',
   metric: 'abandonedShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * rates.spend,
   family: 'outcomes',
   title: 'Coding work that never reached a ship signal',
   docs: `Spend in work STREAMS — a project plus a branch — that contain coding turns

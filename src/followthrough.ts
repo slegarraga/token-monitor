@@ -21,11 +21,14 @@ export type MetricKey =
   | 'cacheHitRatio'
   | 'reworkRatio'
   | 'thinkToCodeRatio'
+  | 'testingShare'
   | 'premiumShare'
   | 'contextBloatShare'
   | 'coldRestartShare'
   | 'premiumWasteShare'
   | 'retryShare'
+  | 'cascadeShare'
+  | 'megaTurnShare'
   | 'toolResultCarryShare'
   | 'thinkingOnTrivialShare'
   | 'floorShare'
@@ -40,25 +43,26 @@ export function metricValue(m: Metrics, key: MetricKey): number {
 }
 
 /**
+ * Metrics no rule owns. `shippedShare` is reported and tracked but has no
+ * finding of its own — nothing fires on shipping more.
+ */
+const UNOWNED_DIRECTION: Partial<Record<MetricKey, 'up' | 'down'>> = {
+  shippedShare: 'up',
+};
+
+/**
  * The improvement direction for each tracked metric. LLM-suggested
  * interventions (#42) are scored against this, not against whatever direction
  * the model claims — the canonical direction is the source of truth.
+ *
+ * Derived from the registry rather than restated here: a rule already declares
+ * the direction it wants its metric to move, and two copies of that fact drift.
+ * The registry test asserts every MetricKey ends up with an entry.
  */
 export const METRIC_DIRECTION: Record<MetricKey, 'up' | 'down'> = {
-  cacheHitRatio: 'up',
-  reworkRatio: 'down',
-  thinkToCodeRatio: 'up',
-  premiumShare: 'down',
-  contextBloatShare: 'down',
-  coldRestartShare: 'down',
-  premiumWasteShare: 'down',
-  retryShare: 'down',
-  toolResultCarryShare: 'down',
-  thinkingOnTrivialShare: 'down',
-  floorShare: 'down',
-  shippedShare: 'up',
-  abandonedShare: 'down',
-};
+  ...UNOWNED_DIRECTION,
+  ...Object.fromEntries(RULES.map((r) => [r.metric, r.direction])),
+} as Record<MetricKey, 'up' | 'down'>;
 
 /**
  * Every rule in the registry, asked whether it fires on these metrics. Rules

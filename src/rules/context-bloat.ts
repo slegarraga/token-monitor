@@ -17,6 +17,8 @@ const rule: Rule = {
   key: 'context-bloat',
   metric: 'contextBloatShare',
   direction: 'down',
+  // Not $-translatable: the share is a count of sessions, not spend.
+  valuePerPoint: () => undefined,
   family: 'caching',
   title: 'Sessions that balloon their own context',
   docs: `Long sessions whose late-half context per turn is at least twice their

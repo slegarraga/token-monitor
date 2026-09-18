@@ -11,6 +11,9 @@ import toolResultBloat from './tool-result-bloat.js';
 import thinkingOnTrivial from './thinking-on-trivial.js';
 import contextFloorCreep from './context-floor-creep.js';
 import abandonedWork from './abandoned-work.js';
+import errorCascade from './error-cascade.js';
+import megaTurns from './mega-turns.js';
+import untestedCoding from './untested-coding.js';
 
 /**
  * The rule registry.
@@ -36,9 +39,21 @@ export const RULES: Rule[] = [
   thinkingOnTrivial,
   contextFloorCreep,
   abandonedWork,
+  errorCascade,
+  megaTurns,
+  untestedCoding,
 ];
 
 export const RULE_BY_KEY: Map<string, Rule> = new Map(RULES.map((r) => [r.key, r]));
+
+/**
+ * Rules indexed by the metric they move, so the pipeline can ask "what is a
+ * point of this metric worth?" without a second list to keep in step. First
+ * rule wins if two ever share a metric — the duplicate-metric test says so.
+ */
+export const RULE_BY_METRIC: Map<string, Rule> = new Map(
+  [...RULES].reverse().map((r) => [r.metric, r]),
+);
 
 // A duplicate key would silently shadow a rule and corrupt follow-through
 // baselines (they are keyed on it). Fail at import instead — the contributor
