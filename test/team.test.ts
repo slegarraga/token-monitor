@@ -98,55 +98,99 @@ function mkExport(user: string, m: ReturnType<typeof metricsOf>, generatedAt = '
 }
 
 const keyDir = mkdtempSync(join(tmpdir(), 'tm-percentile-'));
-const keyring = { 'member-0': fingerprint(signObject(mkExport('member-0', metricsOf({ session_id: 'key-probe' })), keyDir).sig.publicKey) };
 
 function signedExport(
   user: string,
   overall: ReturnType<typeof metricsOf>,
-  keyDir: string,
+  dir: string,
 ): SignedExport {
-  return signObject(mkExport(user, overall), keyDir);
+  return signObject(mkExport(user, overall), dir);
 }
 
-test('memberOutlierPercentiles uses average ranks and only flags the bad tail', () => {
-  // Cache hit is good-high; rework is good-low. The same raw percentile must
-  // therefore flag the opposite ends of these two metrics.
-  const cache = [0.1, 0.2, 0.3, 0.4, 0.5];
-  const rework = [0.5, 0.4, 0.3, 0.2, 0.1];
-  const exports = cache.map((ratio, i) =>
-    signedExport(
-      `member-${i}`,
-      metricsOf({
-        session_id: `p${i}`,
-        activity: 'coding',
-        input_tokens: 1000 + i,
-        output_tokens: 100,
-        cache_read_tokens: (ratio * (1100 + i)) / (1 - ratio),
-      }),
-      keyDir,
-    ),
-  );
-  const annotated = exports.map((ex, i) => ({
-    ...ex,
-    overall: { ...ex.overall, reworkRatio: rework[i] },
+/**
+ * Build a fully keyring-verified team: each member gets their own signing
+ * key, and the keyring pins every fingerprint. Overrides are applied BEFORE
+ * signing so verifyObject stays green.
+ */
+function makeVerifiedTeam(
+  users: string[],
+  overrider: (i: number, base: ReturnType<typeof metricsOf>) => Partial<ReturnType<typeof metricsOf>> = () => ({}),
+): { exports: SignedExport[]; keyring: Record<string, string> } {
+  const exports: SignedExport[] = [];
+  const keyring: Record<string, string> = {};
+  users.forEach((user, i) => {
+    const base = metricsOf({ session_id: `team-${user}` });
+    const overall = { ...base, ...overrider(i, base) };
+    const dir = mkdtempSync(join(tmpdir(), 'tm-member-'));
+    const signed = signObject(mkExport(user, overall), dir);
+    keyring[user] = fingerprint(signed.sig.publicKey);
+    exports.push(signed);
+  });
+  return { exports, keyring };
+}
+
+test('memberOutlierPercentiles flags distance from the median on the bad tail only', () => {
+  // Cache hit is good-high (low is bad); rework is good-low (high is bad).
+  // A wide spread must flag opposite ends; the middle stays quiet.
+  const users = ['member-0', 'member-1', 'member-2', 'member-3', 'member-4'];
+  const cache = [0.1, 0.2, 0.3, 0.4, 0.9];
+  const rework = [0.9, 0.4, 0.3, 0.2, 0.1];
+  const { exports, keyring } = makeVerifiedTeam(users, (i) => ({
+    cacheHitRatio: cache[i],
+    reworkRatio: rework[i],
+    thinkToCodeRatio: 0.5,
+    coldRestartShare: 0.1,
   }));
 
-  const outliers = memberOutlierPercentiles(annotated, keyring);
-  assert.ok(outliers.some((x) => x.name === 'member-0' && x.metric === 'cacheHitRatio' && x.percentile === 0));
-  assert.ok(outliers.some((x) => x.name === 'member-0' && x.metric === 'reworkRatio' && x.percentile === 100));
+  const outliers = memberOutlierPercentiles(exports, keyring);
+  const cacheOut = outliers.find((x) => x.metric === 'cacheHitRatio');
+  assert.ok(cacheOut, 'expected a cacheHitRatio outlier');
+  assert.equal(cacheOut.name, 'member-0');
+  assert.ok(Math.abs(cacheOut.median - 0.3) < 1e-9);
+  assert.ok(cacheOut.distance < 0, 'low cache hit is the bad tail');
+
+  const reworkOut = outliers.find((x) => x.metric === 'reworkRatio');
+  assert.ok(reworkOut, 'expected a reworkRatio outlier');
+  assert.equal(reworkOut.name, 'member-0');
+  assert.ok(reworkOut.distance > 0, 'high rework is the bad tail');
+
   assert.equal(outliers.filter((x) => x.name === 'member-2').length, 0);
 });
 
-test('memberOutlierPercentiles suppresses small teams and unsigned merges', () => {
-  const four = Array.from({ length: 4 }, (_, i) =>
-    signedExport(`small-${i}`, metricsOf({ session_id: `small-${i}` }), keyDir),
-  );
+test('memberOutlierPercentiles stays silent on a tight team', () => {
+  // 84.0 / 84.1 / 84.2 / 84.3 / 84.4% cache hit: someone is always last,
+  // but a 0.4-point spread is noise, not an outlier.
+  const users = ['t-0', 't-1', 't-2', 't-3', 't-4'];
+  const { exports, keyring } = makeVerifiedTeam(users, (i) => ({
+    cacheHitRatio: 0.84 + i * 0.001,
+    reworkRatio: 0.1 + i * 0.001,
+    thinkToCodeRatio: 0.5 + i * 0.001,
+    coldRestartShare: 0.1,
+  }));
+
+  assert.deepEqual(memberOutlierPercentiles(exports, keyring), []);
+});
+
+test('memberOutlierPercentiles suppresses small teams, missing keyrings, and unpinned signers', () => {
+  const four = makeVerifiedTeam(['s-0', 's-1', 's-2', 's-3']);
+  assert.deepEqual(memberOutlierPercentiles(four.exports, four.keyring), []);
+
+  const five = makeVerifiedTeam(['a', 'b', 'c', 'd', 'e']);
+  // No keyring at all: self-signed is not verified.
+  assert.deepEqual(memberOutlierPercentiles(five.exports), []);
+  assert.deepEqual(memberOutlierPercentiles(five.exports, {}), []);
+
+  // Unsigned merges stay at group rollups.
   const unsignedFive = Array.from({ length: 5 }, (_, i) =>
     mkExport(`unsigned-${i}`, metricsOf({ session_id: `unsigned-${i}` })),
   );
+  assert.deepEqual(memberOutlierPercentiles(unsignedFive, five.keyring), []);
 
-  assert.deepEqual(memberOutlierPercentiles(four), []);
-  assert.deepEqual(memberOutlierPercentiles(unsignedFive), []);
+  // One unpinned member poisons the per-person comparison.
+  const { exports, keyring } = makeVerifiedTeam(['v-0', 'v-1', 'v-2', 'v-3', 'v-4']);
+  const rogueDir = mkdtempSync(join(tmpdir(), 'tm-rogue-'));
+  exports[4] = signObject(mkExport('rogue', exports[4].overall), rogueDir);
+  assert.deepEqual(memberOutlierPercentiles(exports, keyring), []);
 });
 
 test('rollupExports groups by discipline and by team', () => {

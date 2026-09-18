@@ -143,7 +143,7 @@ EOF
 token-monitor merge exports/*.json --team team.yaml
 ```
 
-The team report shows per-discipline rollups: tokens, cost, cache hit, rework, think:code ratio, dominant activity, and persona — so you can see *which discipline* needs which intervention, not just a total bill. With five or more verified members, it also flags individual metrics in the extreme tail as “furthest from team pattern”; unsigned merges stay at the safer group level.
+The team report shows per-discipline rollups: tokens, cost, cache hit, rework, think:code ratio, dominant activity, and persona — so you can see *which discipline* needs which intervention, not just a total bill. With five or more verified members (`merge --keys keys.json`, every member's signing fingerprint pinned), it also flags individual metrics far from the team median as “furthest from team pattern” — e.g. “Rework 31% vs team median 12%”. A tight team flags nothing at all. Merges without `--keys`, or with any self-signed-but-unpinned member, stay at the safer group level.
 
 ### Org rollups (lead → org)
 

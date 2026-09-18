@@ -8,7 +8,7 @@ import type { StoredEvent } from './store.js';
 import { ACTIVITIES } from './types.js';
 import type { Activity } from './types.js';
 import { METRIC_DIRECTION } from './followthrough.js';
-import { fingerprint } from './sign.js';
+import { fingerprint, verifyObject } from './sign.js';
 import type { Signature } from './sign.js';
 
 /**
@@ -354,7 +354,7 @@ export function dominantActivity(m: Metrics): Activity {
   );
 }
 
-/** Metrics compared side by side in the team percentile section. */
+/** Metrics compared side by side in the team outlier section. */
 const PERCENTILE_METRICS = [
   'cacheHitRatio', 'reworkRatio', 'thinkToCodeRatio', 'coldRestartShare',
 ] as const;
@@ -362,49 +362,95 @@ const PERCENTILE_METRICS = [
 type PercentileMetric = (typeof PERCENTILE_METRICS)[number];
 
 /**
- * Average-rank percentile of `value` within `values`, from 0 to 100. Ties get
- * the same percentile instead of depending on input order; this is display
- * context, so a stable fractional rank is more honest than a forced order.
+ * Minimum absolute gap that counts as "unusual" per metric. Ratios on a 0-1
+ * scale need a 5-point gap; think:code lives on a wider scale, so it needs
+ * 0.30 before a lead should care. Below these, a team is just a team — even
+ * if someone is technically first or last.
  */
-function averageRankPercentile(values: number[], value: number): number {
-  const lessCount = values.filter((candidate) => candidate < value).length;
-  const equalCount = values.filter((candidate) => candidate === value).length;
-  return ((2 * lessCount + equalCount - 1) / (values.length - 1)) * 50;
+const MIN_GAP: Record<PercentileMetric, number> = {
+  cacheHitRatio: 0.05,
+  reworkRatio: 0.05,
+  thinkToCodeRatio: 0.3,
+  coldRestartShare: 0.05,
+};
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function mad(values: number[], med: number): number {
+  return median(values.map((v) => Math.abs(v - med)));
 }
 
 export interface MemberPercentile {
   name: string;
   metric: PercentileMetric;
-  /** 0-100 percentile, with direction interpreted by the metric. */
-  percentile: number;
+  /** Member's value on this metric. */
+  value: number;
+  /** Team median for this metric. */
+  median: number;
+  /** Signed distance from the median (value - median). */
+  distance: number;
 }
 
 /**
- * Outlier annotations for signed team members, using each metric's canonical
+ * True when an export is verified against the lead's keyring: signed, the
+ * signature checks out, and the signing fingerprint is pinned for someone in
+ * keys.json. Presence of a `sig` field alone is not verification — any export
+ * self-signs, and keys are per machine, so only a pinned fingerprint collapses
+ * a person (not a device) to one identity.
+ */
+function isVerifiedExport(ex: SignedExport, keyring: Record<string, string>): boolean {
+  if (!ex.sig?.publicKey) return false;
+  if (verifyObject(ex as unknown as Record<string, unknown>).ok !== true) return false;
+  const fp = fingerprint(ex.sig.publicKey);
+  return Object.values(keyring).includes(fp);
+}
+
+/**
+ * Outlier annotations for verified team members, using each metric's canonical
  * improvement direction as the single source of truth for which tail is bad.
  *
- * Unsigned exports are excluded because their user@host identity can split one
- * person across machines; per-person comparisons need --verify to mean "person".
- * The middle stays unannotated on purpose: this is triage, not a leaderboard.
+ * A member flags only on distance from the team median — the larger of a
+ * minimum absolute gap and 2x the median absolute deviation — in the bad
+ * direction. A tight team (everyone within a few points) therefore returns
+ * nothing, and the "no member is beyond" fallback actually renders.
+ *
+ * Verification is keyring-resolved: `merge --keys keys.json` must be in play
+ * and every member's fingerprint must be pinned. Self-signed but unpinned
+ * exports stay at the safer group rollups, because user@host can split one
+ * person across machines. The middle stays unannotated on purpose: this is
+ * triage, not a leaderboard.
  */
 export function memberOutlierPercentiles(
   exports: SignedExport[],
   keyring?: Record<string, string>,
 ): MemberPercentile[] {
-  const signed = exports.filter((ex) => ex.sig?.publicKey !== undefined);
-  if (signed.length < 5) return [];
+  if (!keyring) return [];
+  const verified = exports.filter((ex) => isVerifiedExport(ex, keyring));
+  // Every member must be verified — one unverified identity poisons the
+  // per-person comparison, so fall back to group rollups instead.
+  if (exports.length < 5 || verified.length !== exports.length) return [];
 
   const names = new Map<SignedExport, string>(
-    signed.map((ex) => [ex, displayName(ex, keyring)]),
+    verified.map((ex) => [ex, displayName(ex, keyring)]),
   );
   const out: MemberPercentile[] = [];
   for (const metric of PERCENTILE_METRICS) {
-    const values = signed.map((ex) => ex.overall[metric]);
+    const values = verified.map((ex) => ex.overall[metric]);
+    const med = median(values);
+    const spread = mad(values, med);
+    const bar = Math.max(MIN_GAP[metric], 2 * spread);
     const badIsHigh = METRIC_DIRECTION[metric] === 'down';
-    for (const ex of signed) {
-      const percentile = averageRankPercentile(values, ex.overall[metric]);
-      if (badIsHigh ? percentile >= 75 : percentile <= 25) {
-        out.push({ name: names.get(ex)!, metric, percentile });
+    for (const ex of verified) {
+      const value = ex.overall[metric];
+      const distance = value - med;
+      const EPS = 1e-9;
+      const isOutlier = badIsHigh ? distance >= bar - EPS : distance <= -bar + EPS;
+      if (isOutlier) {
+        out.push({ name: names.get(ex)!, metric, value, median: med, distance });
       }
     }
   }

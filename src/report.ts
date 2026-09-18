@@ -881,32 +881,42 @@ export function renderTeamReport(
   }
 
   // Per-member outliers are deliberately separate from group rollups and are
-  // shown only when every member is verifiably identified. A percentile over
-  // unsigned user@host identities can compare one person's two machines.
-  const percentiles = memberOutlierPercentiles(exports, opts.keyring);
-  if (exports.every((e) => e.sig?.publicKey !== undefined)) {
-    if (exports.length >= 5 && percentiles.length > 0) {
+  // shown only when every member is keyring-verified (merge --keys keys.json
+  // with each fingerprint pinned). A comparison over self-signed or
+  // user@host identities can compare one person's two machines.
+  const outliers = memberOutlierPercentiles(exports, opts.keyring);
+  if (opts.keyring && exports.length >= 5) {
+    if (outliers.length > 0) {
       const labels: Record<MemberPercentile['metric'], string> = {
         cacheHitRatio: 'Cache hit',
         reworkRatio: 'Rework',
         thinkToCodeRatio: 'Think:code',
         coldRestartShare: 'Cold restarts',
       };
+      const fmtGap = (metric: MemberPercentile['metric'], distance: number): string => {
+        if (metric === 'thinkToCodeRatio') {
+          const sign = distance >= 0 ? '+' : '−';
+          return `${sign}${Math.abs(distance).toFixed(2)} from median`;
+        }
+        const pp = Math.abs(distance) * 100;
+        const sign = distance >= 0 ? '+' : '−';
+        return `${sign}${pp.toFixed(0)}pp from median`;
+      };
       out.push(section('Furthest from team pattern'));
       out.push(
         table(
           ['Member', 'Metric', 'Team pattern'],
-          percentiles.map(({ name, metric, percentile }) => [
+          outliers.map(({ name, metric, value, median: med, distance }) => [
             name,
-            `${labels[metric]} — ⚠ p${percentile.toFixed(0)} of team`,
-            'coaching signal',
+            `${labels[metric]} ${fmtMetric(metric, value)} vs team median ${fmtMetric(metric, med)}`,
+            fmtGap(metric, distance),
           ]),
         ),
       );
       out.push(
         `  ${DIM}A coaching instrument, not a review weapon. The README's gaming paragraph applies doubly to per-person comparisons.${RESET}`,
       );
-    } else if (exports.length >= 5) {
+    } else {
       out.push(`  ${DIM}No member is beyond the outlier tails on the comparable team metrics.${RESET}`);
     }
   }
