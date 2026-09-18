@@ -1,7 +1,5 @@
-import type { Metrics } from '../metrics.js';
 import { detectSessionThrash } from '../metrics.js';
 import { fmtTokens } from '../fmt.js';
-import type { StoredEvent } from '../store.js';
 import type { ClauseArgs, Rule } from './types.js';
 
 /**
@@ -38,10 +36,13 @@ least.`,
     m.thrashedProjects > 0 && m.sessionFloorTokens > 0
       ? 'Parallel main-loop sessions observed in at least one project — the evidence line names where and what the duplicate floors cost.'
       : undefined,
+  // Advice-only: the extra-floor figure is a ceiling (parallel work may be
+  // genuinely separate), so there is no $/point to project in follow-through.
+  valuePerPoint: () => undefined,
   // score() sees one session at a time and cannot see intervals; concurrency
   // is a group property, so evidence lives in clause() only.
   score: () => ({ score: 0, label: '' }),
-  clause: ({ events, m }: ClauseArgs & { m?: Metrics }) => {
+  clause: ({ events, m }: ClauseArgs) => {
     const groups = detectSessionThrash(events, m?.sessionFloorTokens ?? 0);
     if (!groups.length) return '';
     const totalExtra = groups.reduce((sum, g) => sum + g.extraFloorTokens, 0);

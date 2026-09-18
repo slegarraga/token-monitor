@@ -44,6 +44,7 @@ const rule: Rule = {
   fires: (m) => (m.retryShare >= 0.05 ? `${(m.retryShare * 100).toFixed(0)}% of spend goes to retries...` : undefined),
   score: (s) => ({ score: s.m.retryTokens, label: `${fmtTokens(s.m.retryTokens)} retry tok` }),
   savings: ({ m, rates }) => m.retryTokens * rates.spend,
+  valuePerPoint: ({ m, rates }) => m.spendTokens * rates.spend,   // $ per 1.0 of the metric
 };
 export default rule;
 ```
@@ -60,6 +61,8 @@ export const RULES: Rule[] = [
 ```
 
 `npm test` fails with `rule file src/rules/<key>.ts is not registered` if you miss either half, so you will not find out from a confusing assertion somewhere else.
+
+`valuePerPoint` is what follow-through multiplies a point of progress by. Declare it even when the honest answer is `undefined` — a ratio with no token population of its own (see `low-think-code`) — because a rule that prices savings without it prints a dollar figure and then silently drops the $/point projection. `npm test` now fails by name if you leave it out.
 
 Only `key`, `metric`, `direction`, `title`, `docs` and `fires` are required. `score` supplies the "worst sessions" evidence; `savings` prices the finding; `target`/`personalTarget` say what it is priced against; `clause` appends a sentence that needs the raw events. See `src/rules/types.ts` for the full contract and `src/rules/low-think-code.ts` for a rule that deliberately prices nothing.
 
@@ -83,7 +86,9 @@ The generator reads the **database**, not your transcripts, and the database has
 
 Then a test in `test/rules.test.ts` (or its own file) with a synthetic window from `makeStored`: one case where it fires, one where it must stay silent, and — if it prices savings — one asserting the arithmetic. `npm test` must pass.
 
-If your new rule needs a metric that doesn't exist yet, add it to `Metrics` in `src/metrics.ts` and to the `MetricKey` union in `src/followthrough.ts` so follow-through can track whether the advice worked.
+If your new rule needs a metric that doesn't exist yet, add it to `Metrics` in `src/metrics.ts` and to the `MetricKey` union in `src/followthrough.ts` so follow-through can track whether the advice worked. Nothing else: the metric's improvement direction and its $/point both come from your rule file, and the catalogue size is counted from the registry.
+
+Two files still carry a line per rule — `src/rules/index.ts` and the `MetricKey` union — and both are deliberate: one is the order findings fire in, the other is the declaration that a number is worth tracking. Everything that used to be a third, fourth and fifth shared line now lives in the rule. If your PR conflicts with another contributor's, it should now be in those two places and your own new file, which is a conflict you can resolve without reading the other rule.
 
 ## Writing an adapter
 

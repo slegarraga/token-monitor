@@ -5,6 +5,7 @@ const rule: Rule = {
   key: 'premium-misroute',
   metric: 'premiumWasteShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * Math.max(0, rates.premium - rates.cheap),
   family: 'routing',
   title: 'Premium tokens on reading and chat',
   docs: `The sharper half of the routing story: premium-model tokens spent on

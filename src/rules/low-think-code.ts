@@ -10,6 +10,8 @@ const rule: Rule = {
   key: 'low-think-code',
   metric: 'thinkToCodeRatio',
   direction: 'up',
+  // Not $-translatable: a think:code ratio has no token population of its own.
+  valuePerPoint: () => undefined,
   title: 'Very low think:code ratio',
   docs: `Planning and exploration tokens per coding token. Teams that spend 15-30%
 of their tokens understanding the problem before writing code ship with

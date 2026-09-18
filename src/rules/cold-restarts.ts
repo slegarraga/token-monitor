@@ -13,6 +13,8 @@ const rule: Rule = {
   key: 'cold-restarts',
   metric: 'coldRestartShare',
   direction: 'down',
+  // Same population as the ratio — see this rule's savings().
+  valuePerPoint: ({ m, rates }) => (m.coldRestartBaseTokens ?? m.inputTokens + m.cacheCreationTokens) * (rates.input - rates.cacheRead),
   family: 'caching',
   title: 'Context re-paid after idle gaps',
   docs: `Turns that resume after a gap longer than their session's prompt-cache TTL

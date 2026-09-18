@@ -5,6 +5,7 @@ const rule: Rule = {
   key: 'tool-retry-loops',
   metric: 'retryShare',
   direction: 'down',
+  valuePerPoint: ({ m, rates }) => m.spendTokens * rates.spend,
   family: 'rework',
   title: 'Paying to retry a tool that just failed',
   docs: `Spend on turns that re-run a tool which errored in the immediately

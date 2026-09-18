@@ -1,4 +1,5 @@
 import type { Rule } from './types.js';
+import { inputSideTokens } from '../metrics.js';
 import { fmtTokens } from '../fmt.js';
 
 /** Cache reads cost ~10% of fresh input, so this is the biggest single lever. */
@@ -6,6 +7,7 @@ const rule: Rule = {
   key: 'low-cache-hit',
   metric: 'cacheHitRatio',
   direction: 'up',
+  valuePerPoint: ({ m, rates }) => inputSideTokens(m) * (rates.input - rates.cacheRead),
   family: 'caching',
   title: 'Low cache hit ratio',
   docs: `Cache reads are billed at roughly a tenth of fresh input, so the share of
