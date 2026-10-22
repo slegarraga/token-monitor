@@ -418,8 +418,9 @@ test('untested-coding: flags coding-heavy projects with no test turns, skips tes
 });
 
 // --- #89: redundant-reads. Exploration turns invoking a read-class tool past
-// READ_FREE_CALLS (3) uses of that tool in one main-loop session; the whole
-// turn's spend is priced, and the signal is a proxy (names, not arguments). ---
+// READ_FREE_CALLS (3) uses of that tool in one main-loop session; each turn is
+// priced by its paid share of tool calls, and the signal is a proxy (names, not
+// arguments). ---
 
 /** One exploration turn running `tool` on `session` at minute `m`, 2k in / 1k out. */
 function readTurn(session: string, m: number, extra: Partial<StoredEvent> = {}): StoredEvent {
@@ -456,9 +457,9 @@ test('redundant-reads: fires past the per-tool allowance and prices only paid ca
   const m = computeMetrics(events);
   assert.equal(m.redundantReadCalls, 9 - READ_FREE_CALLS);
   assert.equal(m.redundantReadTurns, 6);
-  // Six carrying turns, but only six of their nine read calls are past the
-  // allowance: price two-thirds of each turn's spend, not its diagnosis.
-  assert.equal(m.redundantReadTokens, Math.ceil((6 * 3_000) * (6 / 6)));
+  // Six carrying turns, each a single paid call: every one prices in full,
+  // while the three free turns before them price nothing.
+  assert.equal(m.redundantReadTokens, 6 * 3_000);
   assert.equal(m.redundantReadSessions, 1);
   assert.equal(m.redundantReadShare, (6 * 3_000) / (9 * 3_000 + 9 * 200));
 
@@ -513,16 +514,45 @@ test('redundant-reads: the allowance boundary prices exactly the paid fraction',
   assert.equal(mo.redundantReadTurns, 1);
   assert.equal(mo.redundantReadTokens, 3_000);
 
-  // The next turn carries two paid read-class calls, so its full turn spend is
-  // priced while the earlier one-call turn remains fully represented once.
+  // A turn carrying four paid calls is still one turn: it prices its own
+  // spend once, never four times over.
   const multi = [
     ...over,
-    readTurn('under', 4, { tools: JSON.stringify(['read', 'read']) }),
+    readTurn('under', 4, { tools: JSON.stringify(['read', 'read', 'read', 'read']) }),
   ];
   const mm = computeMetrics(multi);
-  assert.equal(mm.redundantReadCalls, mo.redundantReadCalls + 2);
+  assert.equal(mm.redundantReadCalls, mo.redundantReadCalls + 4);
   assert.equal(mm.redundantReadTurns, 2);
-  assert.equal(mm.redundantReadTokens, 3_000 + 3_000 * 2);
+  assert.equal(mm.redundantReadTokens, 3_000 + 3_000);
+
+  // The turn that crosses the allowance prices only its paid share: three free
+  // reads and one paid read is a quarter of the turn.
+  const crossing = computeMetrics([
+    readTurn('crossing', 0, { tools: JSON.stringify(['read', 'read', 'read', 'read']) }),
+  ]);
+  assert.equal(crossing.redundantReadCalls, 1);
+  assert.equal(crossing.redundantReadTokens, 3_000 / 4);
+
+  // Other tools in the same turn are legitimate work and dilute the share.
+  const mixed = computeMetrics([
+    ...under,
+    readTurn('under', 3, { tools: JSON.stringify(['read', 'bash']) }),
+  ]);
+  assert.equal(mixed.redundantReadTokens, 3_000 / 2);
+});
+
+test('redundant-reads: priced tokens never exceed spend, however many repeats a turn carries', () => {
+  const events: StoredEvent[] = [];
+  for (let i = 0; i < 12; i++) {
+    events.push(readTurn('heavy', i * 2, { tools: JSON.stringify(Array(8).fill('read')) }));
+    events.push(codingTurn('heavy', i * 2 + 1));
+  }
+  const m = computeMetrics(events);
+  assert.ok(m.redundantReadCalls > m.redundantReadTurns, 'turns carry several repeats each');
+  assert.ok(m.redundantReadTokens <= m.spendTokens);
+  assert.ok(m.redundantReadShare <= 1);
+  const merged = mergeMetrics([m, m]);
+  assert.ok(merged.redundantReadTokens <= merged.spendTokens);
 });
 
 test('mergeMetrics recombines redundant-read counts over pooled spend, legacy exports included', () => {

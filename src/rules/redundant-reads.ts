@@ -25,8 +25,9 @@ Main loop only, exploration turns only: heavy unbroken reading is a subagent's
 job (see search-loop), and a turn that edited alongside its lookups is priced
 by its work instead. Repetition interleaved with real work, the digging
 search-loop's unbroken-run shape cannot see, lands here. Savings stay
-conservative: each carrying turn is priced by its paid-call fraction, not as
-100% waste.`,
+conservative: each carrying turn is priced by the fraction of its tool calls
+that were paid repeats, so the free reads and any other work in the same turn
+are never counted, and no turn can contribute more than its own spend.`,
   fires: (m) =>
     m.redundantReadShare >= REDUNDANT_READS_MIN_SHARE && m.redundantReadCalls >= REDUNDANT_READS_MIN_CALLS
       ? `${(m.redundantReadShare * 100).toFixed(0)}% of spend goes to turns repeating a read-class tool past its first few results (${m.redundantReadCalls} repeat call(s) across ${m.redundantReadSessions} session(s)): ${fmtTokens(m.redundantReadTokens)}. Tool arguments are not stored, so this is a proxy for re-reading what was already on screen. Keep the files you already have in view and ask for diffs or narrow ranges instead of full re-reads.`
